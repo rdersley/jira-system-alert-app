@@ -1,0 +1,44 @@
+modules:
+  jira:issueAction:
+    - key: system-alert-send
+      resource: alert-ui-custom
+      resolver:
+        function: resolver
+      title: Send System Alert
+      viewportSize: large
+      displayConditions:
+        jiraExpression: "project.key == 'SD' && (issue.priority.name == 'P1' || issue.priority.name == 'P2')"
+  jira:adminPage:
+    - key: system-alert-admin
+      resource: admin-ui-custom
+      resolver:
+        function: resolver
+      layout: native
+      title: System Alert Contacts
+  function:
+    - key: resolver
+      handler: index.handler
+
+resources:
+  - key: alert-ui-custom
+    path: static/alert/dist
+  - key: admin-ui-custom
+    path: static/admin/dist
+
+permissions:
+  scopes:
+    - read:jira-work
+    - write:jira-work
+    - write:servicedesk-request
+    - storage:app
+  external:
+    fetch:
+      backend:
+        - address: https://api.twilio.com
+        - address: https://api.dublin.ie1.twilio.com
+        - address: https://api.sendgrid.com
+
+app:
+  runtime:
+    name: nodejs22.x
+  id: ari:cloud:ecosystem::app/8c53b866-0bd4-46bf-ab53-f3de18378d6b

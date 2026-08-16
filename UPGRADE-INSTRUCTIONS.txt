@@ -1,0 +1,19 @@
+System Alert Manager v3.3.2 upgrade
+
+1. Back up the current working app folder.
+2. Copy the v3.3.2 files over the existing registered app folder. Do NOT run forge register.
+3. Rebuild the alert Custom UI:
+   cd C:\JiraApps\jira-system-alert-app-v2\static\alert
+   npm install
+   npm run build
+4. Rebuild the admin Custom UI (unchanged, but safe if copying the full package):
+   cd C:\JiraApps\jira-system-alert-app-v2\static\admin
+   npm install
+   npm run build
+5. From the app root:
+   cd C:\JiraApps\jira-system-alert-app-v2
+   npm install
+   forge lint
+   forge deploy
+
+No new permissions/scopes are introduced in v3.3.2, so a major-version approval should not be required.
