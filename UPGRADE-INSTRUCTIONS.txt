@@ -1,19 +1,44 @@
-System Alert Manager v3.3.2 upgrade
+System Alert Manager v3.6.0 upgrade
 
-1. Back up the current working app folder.
-2. Copy the v3.3.2 files over the existing registered app folder. Do NOT run forge register.
-3. Rebuild the alert Custom UI:
+1. Back up your current working app folder.
+2. Copy the v3.6.0 files over the existing registered Forge app. Do NOT run forge register.
+3. Rebuild all Custom UI resources:
+
    cd C:\JiraApps\jira-system-alert-app-v2\static\alert
    npm install
    npm run build
-4. Rebuild the admin Custom UI (unchanged, but safe if copying the full package):
-   cd C:\JiraApps\jira-system-alert-app-v2\static\admin
+
+   cd ..\admin
    npm install
    npm run build
-5. From the app root:
-   cd C:\JiraApps\jira-system-alert-app-v2
+
+   cd ..\panel
+   npm install
+   npm run build
+
+4. Return to the app root:
+
+   cd ..\..
    npm install
    forge lint
+
+5. Deploy. v3.6.0 adds write:app-data:jira so Forge may request a major version approval:
+
    forge deploy
 
-No new permissions/scopes are introduced in v3.3.2, so a major-version approval should not be required.
+   If Forge requests MAJOR_VERSION_RULE approval, run:
+   forge deploy --approve MAJOR_VERSION_RULE
+
+6. Upgrade the Jira installation:
+
+   forge install --upgrade
+
+7. Open Jira Settings > Apps > System Alert Contacts.
+   Confirm v3.6.0 is shown.
+
+8. Under App settings, configure System Alert priorities. Defaults remain P1 and P2 for backwards compatibility.
+   Click Save settings. Saving synchronises the configured project and priorities to the Jira display-condition app property.
+
+9. Edit existing contacts if needed and assign them to the configured priorities.
+
+Safety: the backend re-reads the Jira ticket before preview/send and blocks alerts where the current project or priority is not enabled.

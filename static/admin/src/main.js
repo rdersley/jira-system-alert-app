@@ -1,7 +1,7 @@
 import { invoke } from '@forge/bridge';
 import './styles.css';
 
-const APP_VERSION = '3.3.2';
+const APP_VERSION = '3.6.0';
 const app = document.querySelector('#app');
 
 const state = {
@@ -47,14 +47,20 @@ function render() {
 
     <section class="card">
       <div class="card-head">
-        <div><h2>App settings</h2><p>System Alert is restricted to SD tickets with priority P1 or P2. These Jira fields pre-fill the alert.</p></div>
+        <div><h2>App settings</h2><p>Choose the Jira project and priorities that can use System Alert. These Jira fields pre-fill the alert.</p></div>
       </div>
       <form id="settingsForm" class="card-body form-grid">
         ${field('clientFieldId','Client Jira field ID', settings.clientFieldId || '', 'customfield_10115')}
         ${field('issueStartFieldId','Issue Start Time field ID', settings.issueStartFieldId || 'customfield_10786', 'customfield_10786')}
         ${field('nextUpdateFieldId','Next Update Due field ID', settings.nextUpdateFieldId || 'customfield_10788', 'customfield_10788')}
         ${field('allowedProjectKey','Allowed project', settings.allowedProjectKey || 'SD', 'SD')}
-        ${field('fromName','Sender display name', settings.fromName || 'Service Desk', 'Service Desk', 'wide')}
+        ${field('fromName','Sender display name', settings.fromName || 'Service Desk', 'Service Desk')}
+        ${field('replyToEmail','Reply-to email', settings.replyToEmail || '', 'servicedesk@example.com','', 'email')}
+        <div class="field wide"><label>System Alert priorities</label><p class="help">Add the Jira priority names that should show the System Alert button. Names must match Jira exactly. You can also set the label and colour used in notifications.</p><div id="priorityConfigRows" class="priority-config-list">${renderPriorityConfigRows(settings.priorityConfigs || [])}</div><button id="addPriority" class="btn secondary small" type="button">+ Add priority</button></div>
+        <div class="field wide"><label>Automatic monthly test</label><div class="checks inline-checks">
+          <label><input id="monthlyTestEnabled" type="checkbox" ${checked(settings.monthlyTestEnabled !== false)}> Enabled</label>
+          <label>Run from <select id="monthlyTestHour">${Array.from({length:24},(_,h)=>`<option value="${h}" ${Number(settings.monthlyTestHour ?? 10)===h?'selected':''}>${String(h).padStart(2,'0')}:00</option>`).join('')} </select> Ireland time on the first Wednesday</label>
+        </div><p class="help">Forge checks hourly. The test sends on the first hourly run at or after this time, once per client.</p></div>
         <div class="form-actions wide"><button class="btn primary" type="submit">Save settings</button></div>
       </form>
     </section>
@@ -71,9 +77,8 @@ function render() {
         ${field('email','Email address', c.email || '', 'name@example.com','', 'email')}
         ${field('mobile','Mobile number', c.mobile || '', '+353...')}
         <div class="field wide"><label>Live incident priorities</label><div class="priority-options">
-          <label><input id="priorityP1" type="checkbox" ${checked((c.priorities || []).includes('P1'))}> P1</label>
-          <label><input id="priorityP2" type="checkbox" ${checked((c.priorities || []).includes('P2'))}> P2</label>
-        </div></div>
+          ${renderContactPriorityOptions(c.priorities || [], settings.priorityConfigs || [])}
+        </div><p class="help">Only priorities enabled above can be assigned to contacts.</p></div>
         <div class="checks wide">
           <label><input id="emailAlerts" type="checkbox" ${checked(c.emailAlerts === true)}> Receive email alerts</label>
           <label><input id="smsAlerts" type="checkbox" ${checked(c.smsAlerts === true)}> Receive SMS alerts</label>
@@ -87,6 +92,11 @@ function render() {
     </section>
 
     <section class="card">
+      <div class="card-head"><div><h2>Automatic monthly test</h2><p>First Wednesday of each month. Recipient lists remain isolated by client code.</p></div></div>
+      <div class="card-body">${renderAutoTestStatus(state.data.autoTestStatus)}</div>
+    </section>
+
+    <section class="card">
       <div class="card-head"><div><h2>Current contacts</h2><p>${contacts.length} saved contact${contacts.length === 1 ? '' : 's'}.</p></div></div>
       <div class="contacts">
         ${contacts.length ? contacts.map(contactCard).join('') : `<div class="empty">No contacts have been added yet.</div>`}
@@ -95,6 +105,47 @@ function render() {
   </div>`;
 
   bindEvents();
+}
+
+function renderPriorityConfigRows(configs = []) {
+  const rows = configs.length ? configs : [
+    { name: 'P1', label: 'P1', color: '#AE2E24' },
+    { name: 'P2', label: 'P2', color: '#B65C02' }
+  ];
+  return rows.map((p, i) => `<div class="priority-config-row" data-priority-row>
+    <div class="field compact"><label>Jira priority name</label><input class="priority-name" value="${esc(p.name || '')}" placeholder="e.g. Highest"></div>
+    <div class="field compact"><label>Display label</label><input class="priority-label" value="${esc(p.label || p.name || '')}" placeholder="e.g. P1 / Critical"></div>
+    <div class="field compact color-field"><label>Colour</label><input class="priority-color" type="color" value="${esc(p.color || '#0C66E4')}"></div>
+    <button class="btn danger small remove-priority" type="button" ${rows.length <= 1 ? 'disabled' : ''}>Remove</button>
+  </div>`).join('');
+}
+
+function renderContactPriorityOptions(selected = [], configs = []) {
+  const selectedKeys = new Set(selected.map(x => String(x).toUpperCase()));
+  if (!configs.length) return '<span class="muted">Save at least one System Alert priority first.</span>';
+  return configs.map((p, i) => `<label><input class="contact-priority" type="checkbox" data-priority="${esc(p.name)}" ${checked(selectedKeys.has(String(p.name).toUpperCase()))}> <span class="priority-dot" style="background:${esc(p.color || '#0C66E4')}"></span>${esc(p.label || p.name)} <small>(${esc(p.name)})</small></label>`).join('');
+}
+
+function collectPriorityConfigs() {
+  const rows = [...document.querySelectorAll('[data-priority-row]')];
+  const configs = rows.map(row => ({
+    name: row.querySelector('.priority-name')?.value?.trim() || '',
+    label: row.querySelector('.priority-label')?.value?.trim() || '',
+    color: row.querySelector('.priority-color')?.value || '#0C66E4'
+  })).filter(p => p.name);
+  const seen = new Set();
+  return configs.filter(p => { const key=p.name.toUpperCase(); if (seen.has(key)) return false; seen.add(key); return true; });
+}
+
+function renderAutoTestStatus(status = {}) {
+  if (status.enabled === false) return '<div class="empty">Automatic monthly testing is currently disabled.</div>';
+  const clients = status.clients || [];
+  if (!clients.length) return `<div class="empty">Enabled for the first Wednesday from ${String(status.hour ?? 10).padStart(2,'0')}:00 Ireland time. No contacts are currently enabled for Monthly Test.</div>`;
+  return `<div class="status-list">${clients.map(row => {
+    const last = row.last;
+    const lastText = last ? `${last.monthLabel || ''} · ${last.automatic ? 'Automatic' : 'Manual'} · Email ${last.emailCount ?? 0} · SMS ${last.smsCount ?? 0}` : 'No monthly test recorded yet';
+    return `<div class="status-row"><strong>${esc(row.clientCode)}</strong><span>${esc(lastText)}</span></div>`;
+  }).join('')}</div>`;
 }
 
 function field(id, label, value, placeholder='', extra='', type='text') {
@@ -120,6 +171,15 @@ function contactCard(c) {
   </article>`;
 }
 
+function bindPriorityRowButtons() {
+  document.querySelectorAll('.remove-priority').forEach(btn => btn.onclick = () => {
+    const rows = document.querySelectorAll('[data-priority-row]');
+    if (rows.length <= 1) return;
+    btn.closest('[data-priority-row]')?.remove();
+    document.querySelectorAll('.remove-priority').forEach(b => b.disabled = document.querySelectorAll('[data-priority-row]').length <= 1);
+  });
+}
+
 function getValue(id) { return byId(id)?.value?.trim() || ''; }
 
 function bindEvents() {
@@ -131,20 +191,32 @@ function bindEvents() {
         issueStartFieldId: getValue('issueStartFieldId'),
         nextUpdateFieldId: getValue('nextUpdateFieldId'),
         allowedProjectKey: getValue('allowedProjectKey'),
-        fromName: getValue('fromName')
+        fromName: getValue('fromName'),
+        replyToEmail: getValue('replyToEmail'),
+        priorityConfigs: collectPriorityConfigs(),
+        monthlyTestEnabled: byId('monthlyTestEnabled').checked,
+        monthlyTestHour: Number(byId('monthlyTestHour').value)
       });
       state.message = 'Settings saved.';
       await load();
     });
   };
 
+  byId('addPriority').onclick = () => {
+    const host = byId('priorityConfigRows');
+    const wrapper = document.createElement('div');
+    wrapper.innerHTML = renderPriorityConfigRows([{ name:'', label:'', color:'#0C66E4' }]);
+    const row = wrapper.firstElementChild;
+    host.appendChild(row);
+    bindPriorityRowButtons();
+  };
+  bindPriorityRowButtons();
+
   byId('contactForm').onsubmit = async e => {
     e.preventDefault();
     const editing = state.editingId;
     await act(async () => {
-      const priorities = [];
-      if (byId('priorityP1').checked) priorities.push('P1');
-      if (byId('priorityP2').checked) priorities.push('P2');
+      const priorities = [...document.querySelectorAll('.contact-priority:checked')].map(cb => cb.dataset.priority).filter(Boolean);
       await invoke('saveContact', {
         id: editing || undefined,
         clientCode: getValue('clientCode'),

@@ -1,40 +1,39 @@
-# System Alert Manager v3.3.2
+# System Alert Manager v3.6.0
 
-This Forge app provides client System Alert notifications from Jira Service Management.
+v3.6.0 adds a Jira **Issue Panel** entry for System Alert Manager while preserving the existing issue-action menu workflow.
 
-## v3.1 changes
+On eligible SD P1/P2 issues the panel provides a compact incident communications summary:
 
-- System Alert Contacts admin page is now Custom UI for consistent rendering.
-- Saved contacts have Edit, Save changes, Cancel and Delete controls.
-- Admin settings include Client, Issue Start Time, Next Update Due, project and sender-name fields.
-- Send System Alert display condition uses a single Jira expression: SD project AND Priority P1/P2.
-- Backend independently refuses live alerts outside SD or priorities other than P1/P2.
-- Internal JSM audit comments remain private (`public: false`).
-- Existing Twilio Account SID/Auth Token/From Number configuration is unchanged.
-- Existing SMS templates and Monthly Test support are preserved.
+- Client
+- Priority
+- Eligible contact count
+- Next Update Due
+- Last communication
+- Recent communication history
+- **Send System Alert** button
 
-See UPGRADE-INSTRUCTIONS.txt for the upgrade commands.
+The button opens the existing Custom UI alert modal, so the proven email, SMS, recipient isolation, preview and audit logic is reused rather than duplicated.
 
-## v3.3.2 changes
+The existing `••• > Send System Alert` issue action remains in place as a fallback during testing.
 
-- Email is selected by default when the Send System Alert form opens, provided email is enabled in app settings.
-- SMS via Twilio is selected by default when the form opens, provided SMS is enabled in app settings.
-- All recipients eligible for the current client, priority and alert type are selected automatically when the form opens.
-- Agents can still untick either delivery channel or individual recipients before sending.
+See `UPGRADE-INSTRUCTIONS.txt` for deployment steps.
 
 
-## v3.3 email improvements
-- Professional responsive HTML incident email template.
-- P1 red, P2 amber, Service Restored green, Monthly Test amber/test-only styling.
-- Alert-type-specific subject lines.
-- Incident details panel with reference, customer, priority, issue start time, next update due, and status.
-- Current Situation panel and Service Desk footer.
-- Preview Email button in the ticket action before sending.
-- SMS, recipient defaults, contact storage and Twilio behaviour are unchanged.
+## v3.6.0 - Configurable alert priorities
 
-## v3.3.2 changes
-- Makes the P1/P2 alert badge more prominent in both the preview and delivered HTML email.
-- Adds a matching coloured P1/P2 pill in the Incident details table.
-- Removes the redundant small SYSTEM ALERT eyebrow that could render awkwardly in previews.
-- Persists Issue Start Time, Next Update Due and Current Situation while opening/closing Preview Email.
-- Preview and send now use the same live form values so the email cannot revert to `Not specified` / `To be confirmed` after previewing.
+System Alert priorities are no longer hard-coded to P1/P2. Jira admins can configure one or more priority names in **System Alert Contacts → App settings**. Each priority has:
+
+- Jira priority name (must match the Jira priority name exactly)
+- Display label used in email/SMS/UI
+- Notification colour
+
+The selected priorities control:
+
+- visibility of the Jira issue action and System Alert issue panel
+- backend preview/send validation
+- which priority options can be assigned to contacts
+- notification labels and colour treatment
+
+The app stores the project/priority display configuration in a Forge app property so Jira expressions can dynamically control issue-module visibility. The backend independently validates the current project and priority before any communication is sent.
+
+**Important:** v3.6.0 adds the `write:app-data:jira` scope, so the first deployment may require Forge major-version approval and `forge install --upgrade`.

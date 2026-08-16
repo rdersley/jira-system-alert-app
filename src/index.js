@@ -5,13 +5,22 @@ import { kvs } from '@forge/kvs';
 const resolver = new Resolver();
 const CONTACT_INDEX = 'system-alert:contacts:index';
 const SETTINGS_KEY = 'system-alert:settings';
+const AUTO_TEST_PREFIX = 'system-alert:auto-test:';
+const DISPLAY_PROPERTY_KEY = 'system-alert-display';
 
 const DEFAULT_SETTINGS = {
   clientFieldId: '',
   issueStartFieldId: 'customfield_10786',
   nextUpdateFieldId: 'customfield_10788',
   allowedProjectKey: 'SD',
+  priorityConfigs: [
+    { name: 'P1', label: 'P1', color: '#AE2E24' },
+    { name: 'P2', label: 'P2', color: '#B65C02' }
+  ],
   fromName: 'Service Desk',
+  replyToEmail: '',
+  monthlyTestEnabled: true,
+  monthlyTestHour: 10,
   emailEnabled: true,
   smsEnabled: true,
   twilioRegion: 'global'
@@ -51,7 +60,9 @@ const fieldText = (v) => {
 };
 
 async function getSettings() {
-  return { ...DEFAULT_SETTINGS, ...((await kvs.get(SETTINGS_KEY)) || {}) };
+  const settings = { ...DEFAULT_SETTINGS, ...((await kvs.get(SETTINGS_KEY)) || {}) };
+  settings.priorityConfigs = normalizePriorityConfigs(settings.priorityConfigs);
+  return settings;
 }
 
 async function getContact(id) { return await kvs.getSecret(`system-alert:contact:${id}`); }
@@ -72,6 +83,84 @@ const normalizePriorities = (v) => {
   const arr = Array.isArray(v) ? v : (v ? [v] : []);
   return arr.map(normalizeTextValue).filter(Boolean);
 };
+
+const normalizePriorityConfigs = (value) => {
+  const raw = Array.isArray(value) ? value : [];
+  const seen = new Set();
+  const rows = [];
+  for (const item of raw) {
+    const name = normalizeTextValue(typeof item === 'object' ? item.name : item);
+    if (!name) continue;
+    const key = name.toUpperCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const label = normalizeTextValue(typeof item === 'object' ? item.label : '') || name;
+    const colorRaw = normalizeTextValue(typeof item === 'object' ? item.color : '');
+    const color = /^#[0-9A-F]{6}$/i.test(colorRaw) ? colorRaw.toUpperCase() : '#0C66E4';
+    rows.push({ name, label, color });
+  }
+  return rows.length ? rows : [
+    { name: 'P1', label: 'P1', color: '#AE2E24' },
+    { name: 'P2', label: 'P2', color: '#B65C02' }
+  ];
+};
+
+const priorityKey = (value='') => normalizeTextValue(value).toUpperCase();
+const enabledPriorityNames = (settings) => normalizePriorityConfigs(settings?.priorityConfigs).map(p => p.name);
+const isEnabledPriority = (settings, priority) => {
+  const key = priorityKey(priority);
+  return normalizePriorityConfigs(settings?.priorityConfigs).some(p => priorityKey(p.name) === key);
+};
+const getPriorityConfig = (settings, priority) => {
+  const key = priorityKey(priority);
+  return normalizePriorityConfigs(settings?.priorityConfigs).find(p => priorityKey(p.name) === key) || { name: normalizeTextValue(priority), label: normalizeTextValue(priority), color: '#0C66E4' };
+};
+
+async function syncDisplayProperty(settings) {
+  const value = {
+    projectKey: normalizeTextValue(settings.allowedProjectKey),
+    priorities: enabledPriorityNames(settings)
+  };
+  const res = await api.asApp().requestJira(route`/rest/forge/1/app/properties/${DISPLAY_PROPERTY_KEY}`, {
+    method: 'PUT',
+    headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+    body: JSON.stringify(value)
+  });
+  if (!res.ok) throw new Error(`Could not update System Alert display configuration (${res.status}): ${await res.text()}`);
+  return value;
+}
+
+function extractClientCode(raw='') {
+  const value = normalizeTextValue(raw).toUpperCase();
+  return value.includes(' - ') ? value.split(' - ')[0].trim() : value.trim();
+}
+
+function dublinDateParts(date = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-IE', {
+    timeZone: 'Europe/Dublin', year: 'numeric', month: '2-digit', day: '2-digit',
+    weekday: 'short', hour: '2-digit', hourCycle: 'h23'
+  }).formatToParts(date).reduce((acc, p) => { if (p.type !== 'literal') acc[p.type] = p.value; return acc; }, {});
+  return {
+    year: Number(parts.year), month: Number(parts.month), day: Number(parts.day),
+    weekday: parts.weekday, hour: Number(parts.hour)
+  };
+}
+
+function isFirstWednesdayNow(date, targetHour) {
+  const p = dublinDateParts(date);
+  return p.weekday === 'Wed' && p.day <= 7 && p.hour >= Number(targetHour ?? 10);
+}
+
+async function buildAutoTestStatus(contacts, settings) {
+  const clients = [...new Set(contacts.filter(c => c.active !== false && c.monthlyTestAlerts === true).map(c => normalizeTextValue(c.clientCode).toUpperCase()).filter(Boolean))].sort();
+  const rows = [];
+  for (const clientCode of clients) {
+    const history = (await kvs.get(`system-alert:test-history:${clientCode}`)) || [];
+    const last = history.find(h => h.automatic === true) || history[0] || null;
+    rows.push({ clientCode, last });
+  }
+  return { enabled: settings.monthlyTestEnabled !== false, hour: Number(settings.monthlyTestHour ?? 10), clients: rows };
+}
 
 resolver.define('getAdminData', async () => {
   const settings = await getSettings();
@@ -106,17 +195,26 @@ resolver.define('getAdminData', async () => {
     contacts.push({ ...normalized, mobileMasked: maskPhone(normalized.mobile) });
   }
 
-  return { settings, contacts, appVersion: '3.3.2' };
+  const autoTestStatus = await buildAutoTestStatus(contacts, settings);
+  // Keep Jira display conditions in sync with the admin configuration.
+  // This also seeds the property automatically after upgrading from an older version.
+  try { await syncDisplayProperty(settings); } catch (e) { console.warn('Could not sync display property:', e.message); }
+  return { settings, contacts, autoTestStatus, appVersion: '3.6.0' };
 });
 
 resolver.define('saveSettings', async ({ payload }) => {
   const current = await getSettings();
-  const next = { ...current, ...payload };
+  const next = { ...current, ...payload, priorityConfigs: normalizePriorityConfigs(payload.priorityConfigs ?? current.priorityConfigs) };
+  if (!normalizeTextValue(next.allowedProjectKey)) throw new Error('An allowed Jira project key is required.');
+  if (!next.priorityConfigs.length) throw new Error('Configure at least one System Alert priority.');
+  // Update the Jira app property first because issue-panel/action visibility reads this property.
+  await syncDisplayProperty(next);
   await kvs.set(SETTINGS_KEY, next);
   return next;
 });
 
 resolver.define('saveContact', async ({ payload }) => {
+  const settings = await getSettings();
   const id = payload.id || safeId();
   const contact = {
     id,
@@ -125,7 +223,7 @@ resolver.define('saveContact', async ({ payload }) => {
     name: String(payload.name || '').trim(),
     email: normalizeTextValue(payload.email),
     mobile: normalizeTextValue(payload.mobile),
-    priorities: normalizePriorities(payload.priorities),
+    priorities: normalizePriorities(payload.priorities).filter(p => isEnabledPriority(settings, p)),
     emailAlerts: payload.emailAlerts === true,
     smsAlerts: payload.smsAlerts === true,
     monthlyTestAlerts: payload.monthlyTestAlerts === true,
@@ -156,10 +254,10 @@ resolver.define('getIssueAlertData', async ({ payload }) => {
   const issue = await r.json();
   if (settings.allowedProjectKey && issue.fields.project?.key !== settings.allowedProjectKey) throw new Error('System Alert is not enabled for this project.');
 
-  const clientRaw = settings.clientFieldId ? fieldText(issue.fields[settings.clientFieldId]).toUpperCase() : '';
-  const clientCode = clientRaw.includes(' - ') ? clientRaw.split(' - ')[0].trim() : clientRaw.trim();
+  const clientCode = settings.clientFieldId ? extractClientCode(issue.fields[settings.clientFieldId]) : '';
   const priority = fieldText(issue.fields.priority) || '';
-  if (!['P1','P2'].includes(priority.toUpperCase())) throw new Error('System Alert is only available for P1 or P2 tickets.');
+  if (!isEnabledPriority(settings, priority)) throw new Error(`System Alert is not enabled for priority ${priority || 'Not set'}.`);
+  const priorityConfig = getPriorityConfig(settings, priority);
   const issueStartTime = settings.issueStartFieldId ? formatDateTime(fieldText(issue.fields[settings.issueStartFieldId])) : '';
   const nextUpdateDue = settings.nextUpdateFieldId ? formatDateTime(fieldText(issue.fields[settings.nextUpdateFieldId])) : '';
   const all = await getAllContacts();
@@ -196,6 +294,8 @@ resolver.define('getIssueAlertData', async ({ payload }) => {
     summary: issue.fields.summary || '',
     description: adfToText(issue.fields.description).trim(),
     priority,
+    priorityLabel: priorityConfig.label,
+    priorityColor: priorityConfig.color,
     clientCode,
     issueStartTime,
     nextUpdateDue,
@@ -204,7 +304,7 @@ resolver.define('getIssueAlertData', async ({ payload }) => {
     monthlyHistory,
     monthlyTestCompleted,
     monthlyTestMonth: monthLabel(),
-    settings: { emailEnabled: settings.emailEnabled, smsEnabled: settings.smsEnabled, fromName: settings.fromName }
+    settings: { emailEnabled: settings.emailEnabled, smsEnabled: settings.smsEnabled, fromName: settings.fromName, priorityConfigs: settings.priorityConfigs }
   };
 });
 
@@ -212,7 +312,9 @@ function emailPresentation(a) {
   const isTest = a.alertType === 'monthly-test';
   const isResolved = a.alertType === 'resolved';
   const isUpdate = a.alertType === 'update';
-  const priority = String(a.priority || 'P1').toUpperCase();
+  const priority = String(a.priority || '').trim();
+  const priorityLabel = a.priorityLabel || a.priorityConfig?.label || priority || 'Priority';
+  const priorityColor = a.priorityConfig?.color || '#AE2E24';
 
   if (isTest) return {
     eyebrow: 'SYSTEM ALERT TEST', badge: 'TEST ONLY', accent: '#B65C02', soft: '#FFF7D6', border: '#E2B203',
@@ -222,19 +324,17 @@ function emailPresentation(a) {
   if (isResolved) return {
     eyebrow: 'SERVICE STATUS', badge: 'SERVICE RESTORED', accent: '#216E4E', soft: '#DCFFF1', border: '#4BCE97',
     title: a.summary || 'Service restored', status: 'Resolved / service restored',
-    intro: `The ${priority} incident has been resolved and service has been restored.`
+    intro: `The ${priorityLabel} incident has been resolved and service has been restored.`
   };
-  if (priority === 'P2') return {
-    eyebrow: isUpdate ? 'INCIDENT UPDATE' : 'SYSTEM ALERT', badge: isUpdate ? 'P2 UPDATE' : 'P2 SYSTEM ALERT',
-    accent: '#B65C02', soft: '#FFF3E0', border: '#F5A623', title: a.summary || 'Priority 2 incident',
-    status: isUpdate ? 'Incident update' : 'Investigation in progress',
-    intro: isUpdate ? 'An update is available for this Priority 2 incident.' : 'A Priority 2 issue has been identified and our priority escalation process has been initiated.'
-  };
+  const soft = priorityColor.toUpperCase() === '#B65C02' ? '#FFF3E0' : '#FFECEB';
+  const border = priorityColor.toUpperCase() === '#B65C02' ? '#F5A623' : priorityColor;
   return {
-    eyebrow: isUpdate ? 'INCIDENT UPDATE' : 'SYSTEM ALERT', badge: isUpdate ? 'P1 UPDATE' : 'P1 SYSTEM ALERT',
-    accent: '#AE2E24', soft: '#FFECEB', border: '#E2483D', title: a.summary || 'Priority 1 incident',
+    eyebrow: isUpdate ? 'INCIDENT UPDATE' : 'SYSTEM ALERT',
+    badge: isUpdate ? `${priorityLabel} UPDATE` : `${priorityLabel} SYSTEM ALERT`,
+    accent: priorityColor, soft, border,
+    title: a.summary || `${priorityLabel} incident`,
     status: isUpdate ? 'Incident update' : 'Investigation in progress',
-    intro: isUpdate ? 'An update is available for this Priority 1 incident.' : 'A Priority 1 issue has been identified and our priority escalation process has been initiated.'
+    intro: isUpdate ? `An update is available for this ${priorityLabel} incident.` : `A ${priorityLabel} issue has been identified and our priority escalation process has been initiated.`
   };
 }
 
@@ -252,14 +352,15 @@ function buildEmailSubject(a) {
   const summary = subjectSummary(a);
   if (a.alertType === 'monthly-test') return `TEST ONLY | MONTHLY SYSTEM ALERT TEST | ${a.clientCode} | ${a.testMonth || monthLabel()}`;
   if (a.alertType === 'resolved') return `SERVICE RESTORED | ${a.clientCode} | ${a.issueKey} | ${summary}`;
-  if (a.alertType === 'update') return `${a.priority} UPDATE | ${a.clientCode} | ${a.issueKey} | ${summary}`;
-  return `${a.priority} SYSTEM ALERT | ${a.clientCode} | ${a.issueKey} | ${summary}`;
+  const priorityLabel = a.priorityLabel || a.priority;
+  if (a.alertType === 'update') return `${priorityLabel} UPDATE | ${a.clientCode} | ${a.issueKey} | ${summary}`;
+  return `${priorityLabel} SYSTEM ALERT | ${a.clientCode} | ${a.issueKey} | ${summary}`;
 }
 
 function buildEmailText(a) {
   const p = emailPresentation(a);
-  if (a.alertType === 'monthly-test') return `${buildEmailSubject(a)}\n\nTEST ONLY — NO LIVE SERVICE INCIDENT.\n\n${p.intro}\n\nReference: ${a.issueKey}\nCustomer: ${a.clientCode}\nTest month: ${a.testMonth || monthLabel()}\nStatus: ${p.status}\n\nTest details:\n${a.message}\n\nNo action is required unless acknowledgement is part of the agreed test process.`;
-  return `${buildEmailSubject(a)}\n\n${p.intro}\n\nReference: ${a.issueKey}\nCustomer: ${a.clientCode}\nPriority: ${a.priority}\nIssue Start Time: ${a.startTime || 'Not specified'}\nNext Update Due: ${a.alertType === 'resolved' ? 'No further update planned' : (a.nextUpdate || 'To be confirmed')}\nStatus: ${p.status}\n\nCurrent situation:\n${a.message}\n\nPlease reference ${a.issueKey} in any correspondence regarding this incident.`;
+  if (a.alertType === 'monthly-test') return `${buildEmailSubject(a)}\n\nTEST ONLY — NO LIVE SERVICE INCIDENT.\n\n${p.intro}\n\n${a.issueKey ? `Reference: ${a.issueKey}\n` : ''}Customer: ${a.clientCode}\nTest month: ${a.testMonth || monthLabel()}\nStatus: ${p.status}\n\nTest details:\n${a.message}\n\nNo action is required unless acknowledgement is part of the agreed test process.`;
+  return `${buildEmailSubject(a)}\n\n${p.intro}\n\nReference: ${a.issueKey}\nCustomer: ${a.clientCode}\nPriority: ${a.priorityLabel || a.priority}\nIssue Start Time: ${a.startTime || 'Not specified'}\nNext Update Due: ${a.alertType === 'resolved' ? 'No further update planned' : (a.nextUpdate || 'To be confirmed')}\nStatus: ${p.status}\n\nCurrent situation:\n${a.message}\n\nPlease reference ${a.issueKey} in any correspondence regarding this incident.`;
 }
 
 function buildEmailHtml(a) {
@@ -269,8 +370,8 @@ function buildEmailHtml(a) {
   const next = isResolved ? 'No further update planned' : (a.nextUpdate || 'To be confirmed');
   const fromName = a.fromName || 'Service Desk';
   const details = isTest
-    ? [ ['Reference', a.issueKey], ['Customer', a.clientCode], ['Test month', a.testMonth || monthLabel()], ['Current status', p.status] ]
-    : [ ['Reference', a.issueKey], ['Customer', a.clientCode], ['Priority', a.priority], ['Issue Start Time', a.startTime || 'Not specified'], ['Next Update Due', next], ['Current status', p.status] ];
+    ? [ ...(a.issueKey ? [['Reference', a.issueKey]] : []), ['Customer', a.clientCode], ['Test month', a.testMonth || monthLabel()], ['Current status', p.status] ]
+    : [ ['Reference', a.issueKey], ['Customer', a.clientCode], ['Priority', a.priorityLabel || a.priority], ['Issue Start Time', a.startTime || 'Not specified'], ['Next Update Due', next], ['Current status', p.status] ];
   const rows = details.map(([k,v],i) => {
     const borderStyle = i < details.length - 1 ? 'border-bottom:1px solid #EBECF0;' : '';
     const valueHtml = k === 'Priority'
@@ -290,18 +391,18 @@ function buildSmsText(a) {
   const next = a.nextUpdate || 'To be confirmed';
 
   if (a.alertType === 'monthly-test') {
-    return `Hi,\n\nThis is the scheduled monthly System Alert test for ${a.clientCode}.\n\nThere is no live service incident.\n\nTest Month: ${a.testMonth || monthLabel()}\nReference: ${a.issueKey}\n\nNo action is required unless acknowledgement is part of the agreed test process.\n\nMany Thanks`.slice(0, 700);
+    return `Hi,\n\nThis is the scheduled monthly System Alert test for ${a.clientCode}.\n\nThere is no live service incident.\n\nTest Month: ${a.testMonth || monthLabel()}\n${a.issueKey ? `Reference: ${a.issueKey}\n\n` : ''}No action is required unless acknowledgement is part of the agreed test process.\n\nMany Thanks`.slice(0, 700);
   }
 
   if (a.alertType === 'resolved') {
-    return `Hi,\n\nThe ${a.priority} issue has now been resolved.\n\nIssue Start Time: ${start}\n\nIssue: ${issueText}\n\nService Status: Restored\n\nNo further updates are planned at this time.\n\nMany Thanks`.slice(0, 700);
+    return `Hi,\n\nThe ${a.priorityLabel || a.priority} issue has now been resolved.\n\nIssue Start Time: ${start}\n\nIssue: ${issueText}\n\nService Status: Restored\n\nNo further updates are planned at this time.\n\nMany Thanks`.slice(0, 700);
   }
 
   if (a.alertType === 'update') {
-    return `Hi,\n\nAn update is available for the ${a.priority} issue.\n\nIssue Start Time: ${start}\n\nIssue: ${issueText}\n\nNext Update Due: ${next}\n\nOur priority escalation process remains active and a further update will follow shortly.\n\nMany Thanks`.slice(0, 700);
+    return `Hi,\n\nAn update is available for the ${a.priorityLabel || a.priority} issue.\n\nIssue Start Time: ${start}\n\nIssue: ${issueText}\n\nNext Update Due: ${next}\n\nOur priority escalation process remains active and a further update will follow shortly.\n\nMany Thanks`.slice(0, 700);
   }
 
-  return `Hi,\n\nA ${a.priority} issue has been identified.\n\nIssue Start Time: ${start}\n\nIssue: ${issueText}\n\nNext Update Due: ${next}\n\nOur priority escalation process has started and a further update will follow shortly.\n\nMany Thanks`.slice(0, 700);
+  return `Hi,\n\nA ${a.priorityLabel || a.priority} issue has been identified.\n\nIssue Start Time: ${start}\n\nIssue: ${issueText}\n\nNext Update Due: ${next}\n\nOur priority escalation process has started and a further update will follow shortly.\n\nMany Thanks`.slice(0, 700);
 }
 
 async function sendTwilio(to, body) {
@@ -327,13 +428,18 @@ async function sendTwilio(to, body) {
   return { sid: j.sid, status: j.status };
 }
 
-async function sendEmail(toEmails, subject, html, text, fromName) {
+async function sendEmail(toEmails, subject, html, text, fromName, replyToEmail='') {
   const apiKey = process.env.SENDGRID_API_KEY;
   const fromEmail = process.env.ALERT_FROM_EMAIL;
   if (!apiKey || !fromEmail) throw new Error('Email provider is not configured. Set SENDGRID_API_KEY and ALERT_FROM_EMAIL.');
+  const recipients = [...new Set((toEmails || []).map(normalizeTextValue).filter(Boolean))];
+  if (!recipients.length) return true;
+  const replyTo = normalizeTextValue(replyToEmail || process.env.ALERT_REPLY_TO || fromEmail);
   const body = {
-    personalizations: [{ to: [{ email: fromEmail }], bcc: toEmails.map(email => ({ email })) }],
+    // One personalization per recipient prevents customers from seeing one another's addresses.
+    personalizations: recipients.map(email => ({ to: [{ email }] })),
     from: { email: fromEmail, name: process.env.ALERT_FROM_NAME || fromName || 'Service Desk' },
+    reply_to: { email: replyTo, name: process.env.ALERT_REPLY_TO_NAME || fromName || 'Service Desk' },
     subject,
     content: [{ type: 'text/plain', value: text }, { type: 'text/html', value: html }]
   };
@@ -349,21 +455,26 @@ async function sendEmail(toEmails, subject, html, text, fromName) {
 resolver.define('previewEmail', async ({ payload }) => {
   const settings = await getSettings();
   const fields = ['priority','project'];
+  if (settings.clientFieldId) fields.push(settings.clientFieldId);
   if (settings.issueStartFieldId) fields.push(settings.issueStartFieldId);
   if (settings.nextUpdateFieldId) fields.push(settings.nextUpdateFieldId);
   const check = await api.asUser().requestJira(route`/rest/api/3/issue/${payload.issueKey}?fields=${fields.join(',')}`);
   if (!check.ok) throw new Error(`Could not validate Jira issue (${check.status}).`);
   const currentIssue = await check.json();
   const currentProject = currentIssue.fields.project?.key || '';
-  const currentPriority = fieldText(currentIssue.fields.priority).toUpperCase();
+  const currentPriority = fieldText(currentIssue.fields.priority);
   if (settings.allowedProjectKey && currentProject !== settings.allowedProjectKey) throw new Error('System Alert is not enabled for this project.');
-  if (!['P1','P2'].includes(currentPriority)) throw new Error('System Alert can only be previewed from a P1 or P2 ticket.');
+  if (!isEnabledPriority(settings, currentPriority)) throw new Error(`System Alert is not enabled for priority ${currentPriority || 'Not set'}.`);
+  const currentPriorityConfig = getPriorityConfig(settings, currentPriority);
+  const currentClientCode = settings.clientFieldId ? extractClientCode(currentIssue.fields[settings.clientFieldId]) : '';
+  if (!currentClientCode) throw new Error('The Jira ticket does not have a valid client configured.');
+  if (extractClientCode(payload.clientCode) !== currentClientCode) throw new Error('Client safety check failed: the alert client no longer matches the Jira ticket. Refresh the ticket before continuing.');
 
   // Prefer values currently entered in the alert form. If either field is empty,
   // fall back to the configured Jira custom field so the preview always matches the ticket.
   const startTime = payload.startTime || (settings.issueStartFieldId ? formatDateTime(fieldText(currentIssue.fields[settings.issueStartFieldId])) : '');
   const nextUpdate = payload.nextUpdate || (settings.nextUpdateFieldId ? formatDateTime(fieldText(currentIssue.fields[settings.nextUpdateFieldId])) : '');
-  const a = { ...payload, startTime, nextUpdate, priority: currentPriority, fromName: settings.fromName, testMonth: payload.testMonth || monthLabel() };
+  const a = { ...payload, clientCode: currentClientCode, startTime, nextUpdate, priority: currentPriority, priorityLabel: currentPriorityConfig.label, priorityConfig: currentPriorityConfig, fromName: settings.fromName, testMonth: payload.testMonth || monthLabel() };
   const presentation = emailPresentation(a);
   return {
     subject: buildEmailSubject(a),
@@ -373,6 +484,7 @@ resolver.define('previewEmail', async ({ payload }) => {
       issueKey: a.issueKey,
       clientCode: a.clientCode,
       priority: a.priority,
+      priorityLabel: a.priorityLabel || a.priority,
       summary: a.summary,
       alertType: a.alertType,
       startTime: a.startTime,
@@ -387,14 +499,21 @@ resolver.define('previewEmail', async ({ payload }) => {
 
 resolver.define('sendAlert', async ({ payload, context }) => {
   const settings = await getSettings();
-  const check = await api.asUser().requestJira(route`/rest/api/3/issue/${payload.issueKey}?fields=priority,project`);
+  const validationFields = ['priority','project'];
+  if (settings.clientFieldId) validationFields.push(settings.clientFieldId);
+  const check = await api.asUser().requestJira(route`/rest/api/3/issue/${payload.issueKey}?fields=${validationFields.join(',')}`);
   if (!check.ok) throw new Error(`Could not validate Jira issue (${check.status}).`);
   const currentIssue = await check.json();
   const currentProject = currentIssue.fields.project?.key || '';
-  const currentPriority = fieldText(currentIssue.fields.priority).toUpperCase();
+  const currentPriority = fieldText(currentIssue.fields.priority);
   if (settings.allowedProjectKey && currentProject !== settings.allowedProjectKey) throw new Error('System Alert is not enabled for this project.');
-  if (!['P1','P2'].includes(currentPriority)) throw new Error('System Alert can only be sent from a P1 or P2 ticket.');
+  if (!isEnabledPriority(settings, currentPriority)) throw new Error(`System Alert is not enabled for priority ${currentPriority || 'Not set'}.`);
+  const currentPriorityConfig = getPriorityConfig(settings, currentPriority);
+  const currentClientCode = settings.clientFieldId ? extractClientCode(currentIssue.fields[settings.clientFieldId]) : '';
+  if (!currentClientCode) throw new Error('The Jira ticket does not have a valid client configured. Alert blocked.');
+  if (extractClientCode(payload.clientCode) !== currentClientCode) throw new Error('Client safety check failed: the alert client does not match the Jira ticket. Refresh before sending.');
   payload.priority = currentPriority;
+  payload.clientCode = currentClientCode;
   const selected = await Promise.all((payload.contactIds || []).map(getContact));
   const contacts = selected.filter(Boolean).map(c => ({
     ...c,
@@ -409,27 +528,31 @@ resolver.define('sendAlert', async ({ payload, context }) => {
     active: c.active !== false
   }));
   if (!contacts.length) throw new Error('Select at least one recipient.');
+  const wrongClient = contacts.filter(c => c.clientCode !== currentClientCode);
+  if (wrongClient.length) throw new Error(`Recipient safety check failed: ${wrongClient.length} selected contact(s) belong to a different client. Nothing was sent.`);
+  const activeClientContacts = contacts.filter(c => c.active && c.clientCode === currentClientCode);
+  if (activeClientContacts.length !== contacts.length) throw new Error('Recipient safety check failed: one or more selected contacts are inactive or do not belong to this client. Nothing was sent.');
 
   const isTest = payload.alertType === 'monthly-test';
-  const eligibleContacts = contacts.filter(c => isTest ? c.monthlyTestAlerts === true : (Array.isArray(c.priorities) ? c.priorities : ['P1']).includes(payload.priority));
+  const eligibleContacts = activeClientContacts.filter(c => isTest ? c.monthlyTestAlerts === true : normalizePriorities(c.priorities).some(p => priorityKey(p) === priorityKey(payload.priority)));
   if (!eligibleContacts.length) throw new Error(isTest ? 'None of the selected contacts are enabled for Monthly Test alerts.' : `None of the selected contacts are enabled for ${payload.priority} alerts.`);
 
-  const a = { ...payload, fromName: settings.fromName, testMonth: payload.testMonth || monthLabel() };
+  const a = { ...payload, priorityLabel: currentPriorityConfig.label, priorityConfig: currentPriorityConfig, fromName: settings.fromName, testMonth: payload.testMonth || monthLabel() };
   const subject = buildEmailSubject(a);
   const text = buildEmailText(a);
   const html = buildEmailHtml(a);
 
   const emailRecipients = payload.sendEmail
-    ? [...new Set(eligibleContacts.filter(c => c.email && (isTest || c.emailAlerts)).map(c => c.email))]
+    ? [...new Set(eligibleContacts.filter(c => c.email && c.emailAlerts).map(c => c.email))]
     : [];
   const smsRecipients = payload.sendSms
-    ? [...new Set(eligibleContacts.filter(c => c.mobile && (isTest || c.smsAlerts)).map(c => c.mobile))]
+    ? [...new Set(eligibleContacts.filter(c => c.mobile && c.smsAlerts).map(c => c.mobile))]
     : [];
   if (!emailRecipients.length && !smsRecipients.length) throw new Error('The selected recipients do not have an enabled email or SMS destination for this alert.');
 
   const results = { email: { attempted: emailRecipients.length, ok: false }, sms: { attempted: smsRecipients.length, sent: 0, failed: [] } };
   if (emailRecipients.length) {
-    await sendEmail(emailRecipients, subject, html, text, settings.fromName);
+    await sendEmail(emailRecipients, subject, html, text, settings.fromName, settings.replyToEmail);
     results.email.ok = true;
   }
 
@@ -483,5 +606,92 @@ resolver.define('sendAlert', async ({ payload, context }) => {
 
   return { ...results, isTest, testMonth: a.testMonth };
 });
+
+
+export async function monthlyTestScheduler() {
+  const settings = await getSettings();
+  if (settings.monthlyTestEnabled === false) return { skipped: 'Automatic monthly test is disabled.' };
+  const now = new Date();
+  const targetHour = Number(settings.monthlyTestHour ?? 10);
+  if (!isFirstWednesdayNow(now, targetHour)) return { skipped: 'Not the first Wednesday test window.' };
+
+  const all = (await getAllContacts()).map(c => ({
+    ...c,
+    clientCode: normalizeTextValue(c.clientCode).toUpperCase(),
+    clientName: normalizeTextValue(c.clientName),
+    name: normalizeTextValue(c.name),
+    email: normalizeTextValue(c.email),
+    mobile: normalizeTextValue(c.mobile),
+    emailAlerts: c.emailAlerts === true,
+    smsAlerts: c.smsAlerts === true,
+    monthlyTestAlerts: c.monthlyTestAlerts === true,
+    active: c.active !== false
+  }));
+
+  const clients = [...new Set(all.filter(c => c.active && c.monthlyTestAlerts && c.clientCode).map(c => c.clientCode))].sort();
+  const month = monthKey(now);
+  const label = monthLabel(now);
+  const results = [];
+
+  for (const clientCode of clients) {
+    const markerKey = `${AUTO_TEST_PREFIX}${clientCode}:${month}`;
+    const marker = await kvs.get(markerKey);
+    const runningAgeMs = marker?.status === 'running' && marker?.at ? (now.getTime() - new Date(marker.at).getTime()) : 0;
+    if (marker?.status === 'sent' || (marker?.status === 'running' && runningAgeMs < 2 * 60 * 60 * 1000)) {
+      results.push({ clientCode, skipped: 'Already processed this month.' });
+      continue;
+    }
+
+    // Set the marker before external sends so the hourly trigger cannot send a second copy.
+    await kvs.set(markerKey, { status: 'running', at: now.toISOString() });
+    try {
+      const clientContacts = all.filter(c => c.active && c.monthlyTestAlerts && c.clientCode === clientCode);
+      const emailRecipients = [...new Set(clientContacts.filter(c => c.emailAlerts && c.email).map(c => c.email))];
+      const smsRecipients = [...new Set(clientContacts.filter(c => c.smsAlerts && c.mobile).map(c => c.mobile))];
+      if (!emailRecipients.length && !smsRecipients.length) {
+        await kvs.set(markerKey, { status: 'skipped', at: now.toISOString(), reason: 'No enabled delivery channels.' });
+        results.push({ clientCode, skipped: 'No enabled delivery channels.' });
+        continue;
+      }
+
+      const a = {
+        issueKey: '', clientCode, priority: '', alertType: 'monthly-test',
+        summary: 'Monthly System Alert Test', message: `This is the scheduled monthly System Alert test for ${clientCode}.`,
+        startTime: '', nextUpdate: '', testMonth: label, fromName: settings.fromName
+      };
+      const subject = buildEmailSubject(a);
+      const text = buildEmailText(a);
+      const html = buildEmailHtml(a);
+      let emailOk = false;
+      if (emailRecipients.length) {
+        await sendEmail(emailRecipients, subject, html, text, settings.fromName, settings.replyToEmail);
+        emailOk = true;
+      }
+      const smsText = buildSmsText(a);
+      let smsSent = 0;
+      const smsFailed = [];
+      for (const mobile of smsRecipients) {
+        try { await sendTwilio(mobile, smsText); smsSent++; }
+        catch (e) { smsFailed.push({ mobile: maskPhone(mobile), error: e.message }); }
+      }
+
+      const entry = {
+        at: new Date().toISOString(), automatic: true, alertType: 'monthly-test',
+        clientCode, emailCount: emailRecipients.length, emailOk,
+        smsCount: smsSent, smsFailedCount: smsFailed.length,
+        monthKey: month, monthLabel: label
+      };
+      const historyKey = `system-alert:test-history:${clientCode}`;
+      const history = (await kvs.get(historyKey)) || [];
+      await kvs.set(historyKey, [entry, ...history].slice(0, 36));
+      await kvs.set(markerKey, { status: 'sent', at: entry.at, emailCount: emailRecipients.length, smsCount: smsSent, smsFailedCount: smsFailed.length });
+      results.push({ clientCode, sent: true, emailCount: emailRecipients.length, smsCount: smsSent, smsFailedCount: smsFailed.length });
+    } catch (e) {
+      await kvs.set(markerKey, { status: 'failed', at: new Date().toISOString(), error: e.message });
+      results.push({ clientCode, error: e.message });
+    }
+  }
+  return { monthKey: month, monthLabel: label, results };
+}
 
 export const handler = resolver.getDefinitions();

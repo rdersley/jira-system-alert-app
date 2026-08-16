@@ -1,7 +1,7 @@
 import { invoke, view } from '@forge/bridge';
 import './styles.css';
 
-const APP_VERSION = '3.3.2';
+const APP_VERSION = '3.6.0';
 const app = document.querySelector('#app');
 
 const state = {
@@ -23,12 +23,13 @@ const esc = (v='') => String(v).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;
 const byId = id => document.getElementById(id);
 
 function issueKeyFromContext(ctx) {
-  return ctx?.extension?.issue?.key || ctx?.platformContext?.issueKey || ctx?.extension?.issueKey || '';
+  return ctx?.extension?.issue?.key || ctx?.platformContext?.issueKey || ctx?.extension?.issueKey || ctx?.extension?.modal?.issueKey || '';
 }
 
 function eligible(c) {
   if (state.alertType === 'monthly-test') return c.monthlyTestAlerts === true;
-  return (c.priorities || []).includes(state.data?.priority);
+  const current = String(state.data?.priority || '').toUpperCase();
+  return (c.priorities || []).some(p => String(p).toUpperCase() === current);
 }
 
 function channelSummary(c) {
@@ -50,7 +51,7 @@ function defaultMessage() {
   if (state.alertType === 'monthly-test') return `This is the scheduled monthly test of the ${d.settings?.fromName || 'Service Desk'} System Alert service. There is no live service incident. No action is required unless acknowledgement is part of the agreed test process.`;
   if (state.alertType === 'resolved') return `Service has been restored. The incident affecting ${d.summary} is now resolved. We will continue to monitor the service.`;
   if (state.alertType === 'update') return d.description || `Our support team continues to investigate ${d.summary}. Further information will follow as it becomes available.`;
-  return d.description || `A ${d.priority} issue has been identified. Our priority escalation process has started and the support team is actively investigating.`;
+  return d.description || `A ${d.priorityLabel || d.priority} issue has been identified. Our priority escalation process has started and the support team is actively investigating.`;
 }
 
 function selectDefaults() {
@@ -112,7 +113,7 @@ function render() {
         <div class="issue-strip">
           <div class="metric"><span>Reference</span><strong>${esc(d.issueKey)}</strong></div>
           <div class="metric"><span>Client</span><strong>${esc(d.clientCode || 'Not set')}</strong></div>
-          <div class="metric"><span>Priority</span><strong>${esc(d.priority || 'Not set')}</strong></div>
+          <div class="metric"><span>Priority</span><strong><span class="badge" style="background:${esc(d.priorityColor || '#0C66E4')};color:#fff">${esc(d.priorityLabel || d.priority || 'Not set')}</span></strong></div>
           <div class="metric"><span>Monthly test</span><strong>${d.monthlyTestCompleted ? 'Completed this month' : 'Not completed this month'}</strong></div>
         </div>
         <div class="summary">${esc(d.summary)}</div>
@@ -174,7 +175,7 @@ function renderEmailPreview(model) {
   const next = isResolved ? 'No further update planned' : (model.nextUpdate || 'To be confirmed');
   const details = isTest
     ? [['Reference', model.issueKey], ['Customer', model.clientCode], ['Test month', model.testMonth], ['Current status', p.status]]
-    : [['Reference', model.issueKey], ['Customer', model.clientCode], ['Priority', model.priority], ['Issue Start Time', model.startTime || 'Not specified'], ['Next Update Due', next], ['Current status', p.status]];
+    : [['Reference', model.issueKey], ['Customer', model.clientCode], ['Priority', model.priorityLabel || model.priority], ['Issue Start Time', model.startTime || 'Not specified'], ['Next Update Due', next], ['Current status', p.status]];
   const rows = details.map(([k,v]) => {
     const renderedValue = k === 'Priority'
       ? `<span class="email-priority-pill" style="background:${esc(p.accent || '#AE2E24')}">${esc(v || '')}</span>`

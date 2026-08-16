@@ -1,4 +1,8 @@
 modules:
+  scheduledTrigger:
+    - key: monthly-system-alert-test
+      function: monthly-test-scheduler
+      interval: hour
   jira:issueAction:
     - key: system-alert-send
       resource: alert-ui-custom
@@ -7,7 +11,16 @@ modules:
       title: Send System Alert
       viewportSize: large
       displayConditions:
-        jiraExpression: "project.key == 'SD' && (issue.priority.name == 'P1' || issue.priority.name == 'P2')"
+        jiraExpression: "(app.properties['system-alert-display'] == null && project.key == 'SD' && ['P1','P2'].includes(issue.priority.name)) || (app.properties['system-alert-display'] != null && project.key == app.properties['system-alert-display'].projectKey && app.properties['system-alert-display'].priorities.includes(issue.priority.name))"
+  jira:issuePanel:
+    - key: system-alert-panel
+      resource: panel-ui-custom
+      resolver:
+        function: resolver
+      title: System Alert  
+      icon: https://developer.atlassian.com/platform/forge/images/icons/issue-panel-icon.svg
+      displayConditions:
+        jiraExpression: "(app.properties['system-alert-display'] == null && project.key == 'SD' && ['P1','P2'].includes(issue.priority.name)) || (app.properties['system-alert-display'] != null && project.key == app.properties['system-alert-display'].projectKey && app.properties['system-alert-display'].priorities.includes(issue.priority.name))"
   jira:adminPage:
     - key: system-alert-admin
       resource: admin-ui-custom
@@ -18,10 +31,15 @@ modules:
   function:
     - key: resolver
       handler: index.handler
+    - key: monthly-test-scheduler
+      handler: index.monthlyTestScheduler
+      timeoutSeconds: 300
 
 resources:
   - key: alert-ui-custom
     path: static/alert/dist
+  - key: panel-ui-custom
+    path: static/panel/dist
   - key: admin-ui-custom
     path: static/admin/dist
 
@@ -31,6 +49,7 @@ permissions:
     - write:jira-work
     - write:servicedesk-request
     - storage:app
+    - write:app-data:jira
   external:
     fetch:
       backend:
