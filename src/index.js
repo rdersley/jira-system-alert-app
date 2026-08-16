@@ -7,6 +7,7 @@ const CONTACT_INDEX = 'system-alert:contacts:index';
 const SETTINGS_KEY = 'system-alert:settings';
 const AUTO_TEST_PREFIX = 'system-alert:auto-test:';
 const DISPLAY_PROPERTY_KEY = 'system-alert-display';
+const APP_VERSION = '3.6.1';
 
 const DEFAULT_SETTINGS = {
   clientFieldId: '',
@@ -134,6 +135,43 @@ function extractClientCode(raw='') {
   const value = normalizeTextValue(raw).toUpperCase();
   return value.includes(' - ') ? value.split(' - ')[0].trim() : value.trim();
 }
+function clientIdentity(raw) {
+  const value = normalizeTextValue(raw);
+  const optionId = raw && typeof raw === 'object' ? String(raw.id || '') : '';
+  const code = extractClientCode(value);
+  const name = value.includes(' - ') ? value.split(' - ').slice(1).join(' - ').trim() : value;
+  return { optionId, value, code, name };
+}
+async function getClientOptions(fieldId) {
+  if (!fieldId) return [];
+  const contextsRes = await api.asUser().requestJira(route`/rest/api/3/field/${fieldId}/context?maxResults=100`);
+  if (!contextsRes.ok) throw new Error(`Could not read client field contexts (${contextsRes.status}).`);
+  const contexts = (await contextsRes.json()).values || [];
+  const options = [];
+  for (const ctx of contexts) {
+    let startAt = 0;
+    while (true) {
+      const res = await api.asUser().requestJira(route`/rest/api/3/field/${fieldId}/context/${ctx.id}/option?startAt=${startAt}&maxResults=100`);
+      if (!res.ok) throw new Error(`Could not read client field options (${res.status}).`);
+      const page = await res.json();
+      for (const o of page.values || []) {
+        if (o.disabled) continue;
+        const ident = clientIdentity({ id:o.id, value:o.value });
+        if (ident.value && !options.some(x => x.optionId === ident.optionId)) options.push(ident);
+      }
+      if (page.isLast || !(page.values || []).length) break;
+      startAt += (page.values || []).length;
+    }
+  }
+  return options.sort((a,b) => a.value.localeCompare(b.value));
+}
+function providerStatus() {
+  return {
+    email: { configured: Boolean(process.env.SENDGRID_API_KEY && process.env.ALERT_FROM_EMAIL), provider: 'SendGrid', from: process.env.ALERT_FROM_EMAIL || '' },
+    sms: { configured: Boolean(process.env.TWILIO_ACCOUNT_SID && (process.env.TWILIO_API_SECRET || process.env.TWILIO_AUTH_TOKEN) && (process.env.TWILIO_FROM_NUMBER || process.env.TWILIO_MESSAGING_SERVICE_SID)), provider: 'Twilio' }
+  };
+}
+
 
 function dublinDateParts(date = new Date()) {
   const parts = new Intl.DateTimeFormat('en-IE', {
@@ -196,10 +234,12 @@ resolver.define('getAdminData', async () => {
   }
 
   const autoTestStatus = await buildAutoTestStatus(contacts, settings);
+  let clientOptions = [];
+  try { clientOptions = await getClientOptions(settings.clientFieldId); } catch (e) { console.warn('Could not load client options:', e.message); }
   // Keep Jira display conditions in sync with the admin configuration.
   // This also seeds the property automatically after upgrading from an older version.
   try { await syncDisplayProperty(settings); } catch (e) { console.warn('Could not sync display property:', e.message); }
-  return { settings, contacts, autoTestStatus, appVersion: '3.6.0' };
+  return { settings, contacts, clientOptions, providerStatus: providerStatus(), autoTestStatus, appVersion: APP_VERSION };
 });
 
 resolver.define('saveSettings', async ({ payload }) => {
@@ -216,10 +256,15 @@ resolver.define('saveSettings', async ({ payload }) => {
 resolver.define('saveContact', async ({ payload }) => {
   const settings = await getSettings();
   const id = payload.id || safeId();
+  const options = await getClientOptions(settings.clientFieldId);
+  const selectedClient = options.find(o => String(o.optionId) === String(payload.clientOptionId || ''));
+  if (!selectedClient) throw new Error('Select a valid client from the configured Jira Client field.');
   const contact = {
     id,
-    clientCode: String(payload.clientCode || '').trim().toUpperCase(),
-    clientName: String(payload.clientName || '').trim(),
+    clientOptionId: selectedClient.optionId,
+    clientValue: selectedClient.value,
+    clientCode: selectedClient.code,
+    clientName: selectedClient.name,
     name: String(payload.name || '').trim(),
     email: normalizeTextValue(payload.email),
     mobile: normalizeTextValue(payload.mobile),
@@ -229,11 +274,32 @@ resolver.define('saveContact', async ({ payload }) => {
     monthlyTestAlerts: payload.monthlyTestAlerts === true,
     active: payload.active !== false
   };
-  if (!contact.clientCode || !contact.name) throw new Error('Client code and contact name are required.');
+  if (!contact.clientCode || !contact.name) throw new Error('Client and contact name are required.');
+  const existing = await getAllContacts();
+  const duplicate = existing.find(c => c.id !== id && String(c.clientOptionId || '') === String(contact.clientOptionId) && ((contact.email && normalizeTextValue(c.email).toLowerCase() === contact.email.toLowerCase()) || (contact.mobile && normalizeTextValue(c.mobile) === contact.mobile)));
+  if (duplicate) throw new Error('A contact with this email address or mobile number already exists for the selected client.');
   await kvs.setSecret(`system-alert:contact:${id}`, contact);
   const ids = (await kvs.get(CONTACT_INDEX)) || [];
   if (!ids.includes(id)) await kvs.set(CONTACT_INDEX, [...ids, id]);
   return { ...contact, mobileMasked: maskPhone(contact.mobile) };
+});
+
+resolver.define('testContact', async ({ payload }) => {
+  const settings = await getSettings();
+  const c = await getContact(payload.id);
+  if (!c) throw new Error('Contact not found.');
+  const channel = payload.channel;
+  if (channel === 'email') {
+    if (!c.email) throw new Error('This contact has no email address.');
+    await sendEmail([c.email], 'TEST ONLY | System Alert contact test', '<div style="font-family:Arial,sans-serif"><h2>System Alert contact test</h2><p>This is a test email from System Alert Manager. No live incident is in progress.</p></div>', 'System Alert contact test. No live incident is in progress.', settings.fromName, settings.replyToEmail);
+    return { ok:true, channel:'email' };
+  }
+  if (channel === 'sms') {
+    if (!c.mobile) throw new Error('This contact has no mobile number.');
+    await sendTwilio(c.mobile, 'TEST ONLY - System Alert contact test. No live incident is in progress.');
+    return { ok:true, channel:'sms' };
+  }
+  throw new Error('Choose Email or SMS test.');
 });
 
 resolver.define('deleteContact', async ({ payload }) => {
@@ -254,7 +320,8 @@ resolver.define('getIssueAlertData', async ({ payload }) => {
   const issue = await r.json();
   if (settings.allowedProjectKey && issue.fields.project?.key !== settings.allowedProjectKey) throw new Error('System Alert is not enabled for this project.');
 
-  const clientCode = settings.clientFieldId ? extractClientCode(issue.fields[settings.clientFieldId]) : '';
+  const currentClient = settings.clientFieldId ? clientIdentity(issue.fields[settings.clientFieldId]) : { optionId:'', code:'', name:'', value:'' };
+  const clientCode = currentClient.code;
   const priority = fieldText(issue.fields.priority) || '';
   if (!isEnabledPriority(settings, priority)) throw new Error(`System Alert is not enabled for priority ${priority || 'Not set'}.`);
   const priorityConfig = getPriorityConfig(settings, priority);
@@ -272,7 +339,7 @@ resolver.define('getIssueAlertData', async ({ payload }) => {
     smsAlerts: c.smsAlerts === true,
     monthlyTestAlerts: c.monthlyTestAlerts === true,
     active: c.active !== false
-  })).filter(c => c.active && c.clientCode === clientCode).map(c => ({
+  })).filter(c => c.active && ((currentClient.optionId && c.clientOptionId) ? String(c.clientOptionId) === String(currentClient.optionId) : c.clientCode === clientCode)).map(c => ({
     id: c.id,
     name: c.name,
     email: c.email,
@@ -509,7 +576,8 @@ resolver.define('sendAlert', async ({ payload, context }) => {
   if (settings.allowedProjectKey && currentProject !== settings.allowedProjectKey) throw new Error('System Alert is not enabled for this project.');
   if (!isEnabledPriority(settings, currentPriority)) throw new Error(`System Alert is not enabled for priority ${currentPriority || 'Not set'}.`);
   const currentPriorityConfig = getPriorityConfig(settings, currentPriority);
-  const currentClientCode = settings.clientFieldId ? extractClientCode(currentIssue.fields[settings.clientFieldId]) : '';
+  const currentClient = settings.clientFieldId ? clientIdentity(currentIssue.fields[settings.clientFieldId]) : { optionId:'', code:'' };
+  const currentClientCode = currentClient.code;
   if (!currentClientCode) throw new Error('The Jira ticket does not have a valid client configured. Alert blocked.');
   if (extractClientCode(payload.clientCode) !== currentClientCode) throw new Error('Client safety check failed: the alert client does not match the Jira ticket. Refresh before sending.');
   payload.priority = currentPriority;
@@ -528,9 +596,10 @@ resolver.define('sendAlert', async ({ payload, context }) => {
     active: c.active !== false
   }));
   if (!contacts.length) throw new Error('Select at least one recipient.');
-  const wrongClient = contacts.filter(c => c.clientCode !== currentClientCode);
-  if (wrongClient.length) throw new Error(`Recipient safety check failed: ${wrongClient.length} selected contact(s) belong to a different client. Nothing was sent.`);
-  const activeClientContacts = contacts.filter(c => c.active && c.clientCode === currentClientCode);
+  const sameClient = c => (currentClient.optionId && c.clientOptionId) ? String(c.clientOptionId) === String(currentClient.optionId) : c.clientCode === currentClientCode;
+  const wrongClient = contacts.filter(c => !sameClient(c));
+  if (wrongClient.length) throw new Error(`Recipient safety check failed: ${wrongClient.length} selected contact(s) belong to a different Jira client. Nothing was sent.`);
+  const activeClientContacts = contacts.filter(c => c.active && sameClient(c));
   if (activeClientContacts.length !== contacts.length) throw new Error('Recipient safety check failed: one or more selected contacts are inactive or do not belong to this client. Nothing was sent.');
 
   const isTest = payload.alertType === 'monthly-test';

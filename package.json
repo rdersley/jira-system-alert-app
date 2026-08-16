@@ -1,6 +1,6 @@
 {
   "name": "system-alert-manager",
-  "version": "3.6.0",
+  "version": "3.6.1",
   "private": true,
   "license": "UNLICENSED",
   "dependencies": {

@@ -1,7 +1,7 @@
 import { invoke } from '@forge/bridge';
 import './styles.css';
 
-const APP_VERSION = '3.6.0';
+const APP_VERSION = '3.6.1';
 const app = document.querySelector('#app');
 
 const state = {
@@ -29,7 +29,7 @@ function renderLoading() {
 
 function render() {
   if (!state.data) return renderLoading();
-  const { settings = {}, contacts = [] } = state.data;
+  const { settings = {}, contacts = [], clientOptions = [], providerStatus = {} } = state.data;
   const editing = state.editingId ? contacts.find(c => c.id === state.editingId) : null;
   const c = editing || {};
 
@@ -65,14 +65,24 @@ function render() {
       </form>
     </section>
 
+    <section class="card">
+      <div class="card-head"><div><h2>Communication providers</h2><p>Quick health check for the delivery services used by System Alert Manager.</p></div></div>
+      <div class="card-body provider-grid">
+        ${providerCard('Email', providerStatus.email)}
+        ${providerCard('SMS', providerStatus.sms)}
+      </div>
+    </section>
+
     <section class="card ${editing ? 'editing' : ''}">
       <div class="card-head">
         <div><h2>${editing ? 'Edit contact' : 'Add contact'}</h2><p>${editing ? 'Update the saved contact details and alert preferences.' : 'Add a contact or distribution list for a client.'}</p></div>
         ${editing ? `<button id="cancelEditTop" class="btn secondary" type="button">Cancel edit</button>` : ''}
       </div>
       <form id="contactForm" class="card-body form-grid">
-        ${field('clientCode','Client code', c.clientCode || '', 'RYR')}
-        ${field('clientName','Client name', c.clientName || '', 'Ryanair')}
+        <div class="field wide"><label for="clientOptionId">Client</label><select id="clientOptionId" name="clientOptionId" required>
+          <option value="">Select a client from the Jira Client field…</option>
+          ${clientOptions.map(o => `<option value="${esc(o.optionId)}" ${String(c.clientOptionId||'')===String(o.optionId)?'selected':''}>${esc(o.value)}</option>`).join('')}
+        </select><p class="help">Loaded directly from ${esc(settings.clientFieldId || 'the configured Jira Client field')}. Client code/name are no longer typed manually.</p></div>
         ${field('name','Contact / distribution list name', c.name || '', 'Operations Team','wide')}
         ${field('email','Email address', c.email || '', 'name@example.com','', 'email')}
         ${field('mobile','Mobile number', c.mobile || '', '+353...')}
@@ -97,14 +107,25 @@ function render() {
     </section>
 
     <section class="card">
-      <div class="card-head"><div><h2>Current contacts</h2><p>${contacts.length} saved contact${contacts.length === 1 ? '' : 's'}.</p></div></div>
-      <div class="contacts">
-        ${contacts.length ? contacts.map(contactCard).join('') : `<div class="empty">No contacts have been added yet.</div>`}
-      </div>
+      <div class="card-head"><div><h2>Current contacts</h2><p>${contacts.length} saved contact${contacts.length === 1 ? '' : 's'}, grouped by client.</p></div><input id="contactFilter" class="contact-filter" placeholder="Filter contacts or clients…"></div>
+      <div id="contactsHost" class="contacts">${renderGroupedContacts(contacts)}</div>
     </section>
   </div>`;
 
   bindEvents();
+}
+
+function providerCard(label, status = {}) {
+  const ok = status.configured === true;
+  return `<div class="provider-card ${ok?'ok':'bad'}"><div><strong>${esc(label)} · ${esc(status.provider || '')}</strong><p>${ok ? 'Configured and available' : 'Not fully configured'}</p>${status.from ? `<small>From: ${esc(status.from)}</small>` : ''}</div><span class="provider-pill">${ok?'✓ Ready':'Needs setup'}</span></div>`;
+}
+function renderGroupedContacts(contacts = [], filter='') {
+  const q = String(filter||'').toLowerCase();
+  const visible = contacts.filter(c => !q || [c.clientCode,c.clientName,c.name,c.email].some(v => String(v||'').toLowerCase().includes(q)));
+  if (!visible.length) return `<div class="empty">No matching contacts.</div>`;
+  const groups = new Map();
+  visible.forEach(c => { const key = c.clientValue || `${c.clientCode} - ${c.clientName}`; if(!groups.has(key)) groups.set(key,[]); groups.get(key).push(c); });
+  return [...groups.entries()].map(([client,rows]) => `<div class="client-group"><div class="client-group-head"><strong>${esc(client)}</strong><span>${rows.length} contact${rows.length===1?'':'s'}</span></div>${rows.map(contactCard).join('')}</div>`).join('');
 }
 
 function renderPriorityConfigRows(configs = []) {
@@ -165,6 +186,8 @@ function contactCard(c) {
       <div class="badges">${flags.map(f => `<span class="badge">${esc(f)}</span>`).join('')}</div>
     </div>
     <div class="contact-actions">
+      ${c.email ? `<button class="btn secondary test-contact" data-id="${esc(c.id)}" data-channel="email" type="button">Test email</button>` : ''}
+      ${c.mobile ? `<button class="btn secondary test-contact" data-id="${esc(c.id)}" data-channel="sms" type="button">Test SMS</button>` : ''}
       <button class="btn secondary edit-contact" data-id="${esc(c.id)}" type="button">Edit</button>
       <button class="btn danger delete-contact" data-id="${esc(c.id)}" type="button">Delete</button>
     </div>
@@ -219,8 +242,7 @@ function bindEvents() {
       const priorities = [...document.querySelectorAll('.contact-priority:checked')].map(cb => cb.dataset.priority).filter(Boolean);
       await invoke('saveContact', {
         id: editing || undefined,
-        clientCode: getValue('clientCode'),
-        clientName: getValue('clientName'),
+        clientOptionId: getValue('clientOptionId'),
         name: getValue('name'),
         email: getValue('email'),
         mobile: getValue('mobile'),
@@ -253,6 +275,13 @@ function bindEvents() {
       await load();
     });
   });
+
+  document.querySelectorAll('.test-contact').forEach(btn => btn.onclick = async () => {
+    const channel = btn.dataset.channel;
+    if (!confirm(`Send a TEST ${channel.toUpperCase()} to this contact?`)) return;
+    await act(async () => { await invoke('testContact', { id: btn.dataset.id, channel }); state.message = `Test ${channel} sent.`; render(); });
+  });
+  if (byId('contactFilter')) byId('contactFilter').oninput = e => { byId('contactsHost').innerHTML = renderGroupedContacts(state.data.contacts || [], e.target.value); bindEvents(); };
 
   const cancel = () => { state.editingId = null; state.message = ''; state.error=''; render(); };
   if (byId('cancelEdit')) byId('cancelEdit').onclick = cancel;

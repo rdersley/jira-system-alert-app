@@ -1,39 +1,17 @@
-# System Alert Manager v3.6.0
+# System Alert Manager v3.6.1
 
-v3.6.0 adds a Jira **Issue Panel** entry for System Alert Manager while preserving the existing issue-action menu workflow.
+Usability and recipient-safety update based on v3.6.0.
 
-On eligible SD P1/P2 issues the panel provides a compact incident communications summary:
+## Changes
+- Loads client choices from the configured Jira Client custom field.
+- Add/Edit Contact uses a Jira-driven client dropdown instead of free-text client code/name.
+- Stores Jira client option ID/value/code/name on contacts.
+- Recipient filtering prefers the Jira client option ID, with legacy code matching retained during migration.
+- Duplicate email/mobile protection within the same Jira client.
+- Provider status cards for SendGrid email and Twilio SMS.
+- Individual Test Email / Test SMS actions for saved contacts.
+- Current contacts grouped by Jira client with a filter box.
+- Existing configurable priorities, monthly tests, email/SMS templates and issue workflow are preserved.
 
-- Client
-- Priority
-- Eligible contact count
-- Next Update Due
-- Last communication
-- Recent communication history
-- **Send System Alert** button
-
-The button opens the existing Custom UI alert modal, so the proven email, SMS, recipient isolation, preview and audit logic is reused rather than duplicated.
-
-The existing `••• > Send System Alert` issue action remains in place as a fallback during testing.
-
-See `UPGRADE-INSTRUCTIONS.txt` for deployment steps.
-
-
-## v3.6.0 - Configurable alert priorities
-
-System Alert priorities are no longer hard-coded to P1/P2. Jira admins can configure one or more priority names in **System Alert Contacts → App settings**. Each priority has:
-
-- Jira priority name (must match the Jira priority name exactly)
-- Display label used in email/SMS/UI
-- Notification colour
-
-The selected priorities control:
-
-- visibility of the Jira issue action and System Alert issue panel
-- backend preview/send validation
-- which priority options can be assigned to contacts
-- notification labels and colour treatment
-
-The app stores the project/priority display configuration in a Forge app property so Jira expressions can dynamically control issue-module visibility. The backend independently validates the current project and priority before any communication is sent.
-
-**Important:** v3.6.0 adds the `write:app-data:jira` scope, so the first deployment may require Forge major-version approval and `forge install --upgrade`.
+## Legacy contacts
+Existing v3.6 contacts remain readable. Edit each legacy contact once and choose its Jira client to migrate it to option-ID matching.

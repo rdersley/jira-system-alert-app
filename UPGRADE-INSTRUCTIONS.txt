@@ -1,44 +1,28 @@
-System Alert Manager v3.6.0 upgrade
+System Alert Manager v3.6.1 upgrade
 
-1. Back up your current working app folder.
-2. Copy the v3.6.0 files over the existing registered Forge app. Do NOT run forge register.
-3. Rebuild all Custom UI resources:
+1. Start from your committed v3.6.0 GitHub working folder.
+2. Copy the contents of this package over the existing registered Forge app. Do NOT run forge register.
+3. Build all Custom UI resources:
 
-   cd C:\JiraApps\jira-system-alert-app-v2\static\alert
-   npm install
-   npm run build
+cd C:\jiraapps\jira-system-alert-app\static\alert
+npm install
+npm run build
+cd ..\admin
+npm install
+npm run build
+cd ..\panel
+npm install
+npm run build
 
-   cd ..\admin
-   npm install
-   npm run build
+4. Return to the app root and validate:
+cd C:\jiraapps\jira-system-alert-app
+npm install
+forge lint
 
-   cd ..\panel
-   npm install
-   npm run build
+5. Commit/push to GitHub, then deploy:
+forge deploy
 
-4. Return to the app root:
+No new Forge scopes are added by v3.6.1, so a new major-version approval should not normally be required.
 
-   cd ..\..
-   npm install
-   forge lint
-
-5. Deploy. v3.6.0 adds write:app-data:jira so Forge may request a major version approval:
-
-   forge deploy
-
-   If Forge requests MAJOR_VERSION_RULE approval, run:
-   forge deploy --approve MAJOR_VERSION_RULE
-
-6. Upgrade the Jira installation:
-
-   forge install --upgrade
-
-7. Open Jira Settings > Apps > System Alert Contacts.
-   Confirm v3.6.0 is shown.
-
-8. Under App settings, configure System Alert priorities. Defaults remain P1 and P2 for backwards compatibility.
-   Click Save settings. Saving synchronises the configured project and priorities to the Jira display-condition app property.
-
-9. Edit existing contacts if needed and assign them to the configured priorities.
-
-Safety: the backend re-reads the Jira ticket before preview/send and blocks alerts where the current project or priority is not enabled.
+6. Open System Alert Contacts. Confirm v3.6.1, client dropdown values, provider status, contact filtering and test buttons.
+7. Edit each legacy contact once and select its Jira client so the contact stores the Jira option ID. Until migrated, legacy contacts continue to fall back to client-code matching.
