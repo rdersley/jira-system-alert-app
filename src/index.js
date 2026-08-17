@@ -10,6 +10,8 @@ const DISPLAY_PROPERTY_KEY = 'system-alert-display';
 const PROVIDER_SETTINGS_KEY = 'system-alert:providers';
 const TEMPLATE_SETTINGS_KEY = 'system-alert:templates';
 const BRANDING_SETTINGS_KEY = 'system-alert:branding';
+const BRAND_LOGO_KEY = 'system-alert:brand-logo';
+const BRAND_LOGO_MAX_BYTES = 140 * 1024;
 const PROVIDER_SECRET_KEYS = {
   sendgridApiKey: 'system-alert:provider:sendgrid-api-key',
   twilioAccountSid: 'system-alert:provider:twilio-account-sid',
@@ -17,7 +19,7 @@ const PROVIDER_SECRET_KEYS = {
   twilioApiKey: 'system-alert:provider:twilio-api-key',
   twilioApiSecret: 'system-alert:provider:twilio-api-secret'
 };
-const APP_VERSION = '3.7.7';
+const APP_VERSION = '3.7.8';
 
 const DEFAULT_SETTINGS = {
   clientFieldId: '',
@@ -143,8 +145,16 @@ async function getTemplates() {
   return out;
 }
 
+async function getBrandLogo() {
+  return (await kvs.get(BRAND_LOGO_KEY)) || null;
+}
+function logoDataUrl(logo) {
+  return logo?.data && logo?.contentType ? `data:${logo.contentType};base64,${logo.data}` : '';
+}
 async function getBranding() {
-  return { ...DEFAULT_BRANDING, ...((await kvs.get(BRANDING_SETTINGS_KEY)) || {}) };
+  const branding = { ...DEFAULT_BRANDING, ...((await kvs.get(BRANDING_SETTINGS_KEY)) || {}) };
+  const logo = await getBrandLogo();
+  return { ...branding, logoUploaded:Boolean(logo?.data), logoFileName:logo?.fileName || '', logoContentType:logo?.contentType || '', logoDataUrl:logoDataUrl(logo) };
 }
 
 function normalizeHexColor(value, fallback) {
@@ -459,6 +469,23 @@ resolver.define('resetBranding', async () => {
   return await getBranding();
 });
 
+resolver.define('saveBrandLogo', async ({ payload }) => {
+  const contentType = normalizeTextValue(payload?.contentType).toLowerCase();
+  const fileName = normalizeTextValue(payload?.fileName || 'logo').replace(/[\r\n]/g, '').slice(0, 120);
+  const data = String(payload?.data || '').replace(/\s/g, '');
+  if (!['image/png','image/jpeg'].includes(contentType)) throw new Error('Logo must be a PNG or JPG image.');
+  if (!data) throw new Error('No logo image was supplied.');
+  const bytes = Buffer.from(data, 'base64');
+  if (!bytes.length) throw new Error('The logo image is empty.');
+  if (bytes.length > BRAND_LOGO_MAX_BYTES) throw new Error('Logo is too large. Please use a PNG/JPG smaller than 140 KB.');
+  await kvs.set(BRAND_LOGO_KEY, { contentType, fileName, data });
+  return await getBranding();
+});
+resolver.define('deleteBrandLogo', async () => {
+  await kvs.delete(BRAND_LOGO_KEY);
+  return await getBranding();
+});
+
 resolver.define('previewTemplate', async ({ payload }) => {
   const type = templateType(payload?.templateType || 'initial');
   const templates = await getTemplates();
@@ -674,7 +701,7 @@ function buildPreviewModel(a, templates = DEFAULT_TEMPLATES, brandingInput = DEF
     footerText: renderTemplate(branding.footerText || DEFAULT_BRANDING.footerText, a),
     supportLabel: branding.supportLabel || '',
     supportUrl: branding.supportUrl || '',
-    logoUrl: branding.logoUrl || ''
+    logoUrl: branding.logoDataUrl || branding.logoUrl || ''
   };
 }
 
@@ -767,8 +794,9 @@ function buildEmailHtml(a, templates = DEFAULT_TEMPLATES, brandingInput = DEFAUL
   const defaultFollowup = isTest ? 'No action is required unless acknowledgement is part of the agreed test process.' : isResolved ? 'No further incident updates are planned at this time. The Service Desk will continue to monitor the service.' : 'Our support team is actively managing this incident. A further update will be provided by the time shown above, or sooner if there is a significant change.';
   const followup = renderTemplate(template.followup || defaultFollowup, a);
 
-  const logo = branding.logoUrl
-    ? `<img src="${esc(branding.logoUrl)}" alt="" style="display:block;max-height:44px;max-width:190px;margin-bottom:13px;border:0">`
+  const emailLogoSrc = branding.logoDataUrl ? 'cid:system-alert-logo' : branding.logoUrl;
+  const logo = emailLogoSrc
+    ? `<img src="${esc(emailLogoSrc)}" alt="" style="display:block;max-height:44px;max-width:190px;margin-bottom:13px;border:0">`
     : '';
   const support = branding.supportUrl
     ? `<div style="margin-top:6px"><a href="${esc(branding.supportUrl)}" style="color:${branding.accentColor};text-decoration:none">${esc(branding.supportLabel || branding.supportUrl)}</a></div>`
@@ -827,7 +855,7 @@ async function sendTwilio(to, body) {
   return { sid: j.sid, status: j.status };
 }
 
-async function sendEmail(toEmails, subject, html, text, fromName, replyToEmail='') {
+async function sendEmail(toEmails, subject, html, text, fromName, replyToEmail='', inlineLogo=null) {
   const cfg = await getProviderSettings();
   const apiKey = (await getProviderSecret('sendgridApiKey')) || process.env.SENDGRID_API_KEY;
   const fromEmail = cfg.sendgridFromEmail || process.env.ALERT_FROM_EMAIL;
@@ -844,6 +872,9 @@ async function sendEmail(toEmails, subject, html, text, fromName, replyToEmail='
     subject,
     content: [{ type: 'text/plain', value: text }, { type: 'text/html', value: html }]
   };
+  if (inlineLogo?.data && inlineLogo?.contentType) {
+    body.attachments = [{ content:inlineLogo.data, type:inlineLogo.contentType, filename:inlineLogo.fileName || (inlineLogo.contentType === 'image/png' ? 'system-alert-logo.png' : 'system-alert-logo.jpg'), disposition:'inline', content_id:'system-alert-logo' }];
+  }
   const res = await fetch('https://api.sendgrid.com/v3/mail/send', {
     method:'POST',
     headers:{'Authorization':`Bearer ${apiKey}`,'Content-Type':'application/json'},
@@ -946,7 +977,7 @@ resolver.define('sendAlert', async ({ payload, context }) => {
 
   const results = { email: { attempted: emailRecipients.length, ok: false }, sms: { attempted: smsRecipients.length, sent: 0, failed: [] } };
   if (emailRecipients.length) {
-    await sendEmail(emailRecipients, subject, html, text, settings.fromName, settings.replyToEmail);
+    await sendEmail(emailRecipients, subject, html, text, settings.fromName, settings.replyToEmail, await getBrandLogo());
     results.email.ok = true;
   }
 
@@ -1060,7 +1091,7 @@ export async function monthlyTestScheduler() {
       const html = buildEmailHtml(a, templates, branding);
       let emailOk = false;
       if (emailRecipients.length) {
-        await sendEmail(emailRecipients, subject, html, text, settings.fromName, settings.replyToEmail);
+        await sendEmail(emailRecipients, subject, html, text, settings.fromName, settings.replyToEmail, await getBrandLogo());
         emailOk = true;
       }
       const smsText = buildSmsText(a, templates);

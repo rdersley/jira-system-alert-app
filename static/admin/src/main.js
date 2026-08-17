@@ -1,7 +1,7 @@
 import { invoke } from '@forge/bridge';
 import './styles.css';
 
-const APP_VERSION = '3.7.7';
+const APP_VERSION = '3.7.8';
 const app = document.querySelector('#app');
 
 const state = {
@@ -166,7 +166,8 @@ function renderBrandingEditor(b = {}) {
     <div class="branding-form">
       <div class="section-title"><h3>Email branding</h3><p>These settings are shared by every email template. Priority badges keep their configured incident colours.</p></div>
       ${field('brandServiceName','Service / company name', b.serviceName || state.data.settings?.fromName || 'Service Desk', 'Service Desk')}
-      ${field('brandLogoUrl','Logo URL', b.logoUrl || '', 'https://example.com/logo.png','wide','url')}
+      <div class="field wide brand-logo-upload"><label for="brandLogoFile">Logo</label><div class="logo-upload-row">${b.logoDataUrl ? `<div class="logo-current"><img src="${esc(b.logoDataUrl)}" alt="Current logo"><span>${esc(b.logoFileName || 'Uploaded logo')}</span></div>` : '<div class="logo-empty">No uploaded logo</div>'}<div class="logo-upload-actions"><input id="brandLogoFile" type="file" accept="image/png,image/jpeg"><button id="removeBrandLogo" class="btn secondary" type="button" ${b.logoUploaded?'':'disabled'}>Remove uploaded logo</button></div></div><p class="help">PNG or JPG, maximum 140 KB. Uploaded logos are stored with this Jira app installation and embedded into outgoing SendGrid emails.</p></div>
+      ${field('brandLogoUrl','Fallback logo URL (optional)', b.logoUrl || '', 'https://example.com/logo.png','wide','url')}
       <div class="colour-grid">
         ${colorField('brandHeaderBackground','Header background',b.headerBackground || '#172B4D')}
         ${colorField('brandHeaderText','Header text',b.headerText || '#FFFFFF')}
@@ -202,6 +203,18 @@ function colorField(id,label,value){return `<div class="field color-control"><la
 function collectBranding(){return {
   serviceName:getValue('brandServiceName'), logoUrl:getValue('brandLogoUrl'), headerBackground:byId('brandHeaderBackground')?.value || '#172B4D', headerText:byId('brandHeaderText')?.value || '#FFFFFF', accentColor:byId('brandAccentColor')?.value || '#0C66E4', pageBackground:byId('brandPageBackground')?.value || '#F1F2F4', footerBackground:byId('brandFooterBackground')?.value || '#F7F8F9', footerText:byId('brandFooterText')?.value || '', supportLabel:getValue('brandSupportLabel'), supportUrl:getValue('brandSupportUrl')
 };}
+
+function readLogoFile(file) {
+  return new Promise((resolve,reject) => {
+    if (!file) return reject(new Error('Choose a PNG or JPG logo first.'));
+    if (!['image/png','image/jpeg'].includes(file.type)) return reject(new Error('Logo must be a PNG or JPG image.'));
+    if (file.size > 140 * 1024) return reject(new Error('Logo is too large. Please choose a PNG/JPG smaller than 140 KB.'));
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('The logo image could not be read.'));
+    reader.onload = () => { const value=String(reader.result||''); const comma=value.indexOf(','); if(comma<0) return reject(new Error('The logo image could not be read.')); resolve({fileName:file.name,contentType:file.type,data:value.slice(comma+1)}); };
+    reader.readAsDataURL(file);
+  });
+}
 
 function collectCurrentTemplate(){return {subject:byId('templateSubject')?.value || '',intro:byId('templateIntro')?.value || '',followup:byId('templateFollowup')?.value || '',sms:byId('templateSms')?.value || ''};}
 
@@ -432,6 +445,15 @@ function bindEvents() {
   if (byId('brandingForm')) byId('brandingForm').onsubmit = async e => {
     e.preventDefault();
     await act(async () => { await invoke('saveBranding', collectBranding()); state.message='Branding saved.'; await load(); });
+  };
+  if (byId('brandLogoFile')) byId('brandLogoFile').onchange = async e => {
+    const file=e.target.files?.[0]; if(!file) return;
+    try { const payload=await readLogoFile(file); await act(async()=>{ await invoke('saveBrandLogo',payload); state.message='Logo uploaded.'; await load(); }); }
+    catch(err){ state.error=err?.message || String(err); render(); }
+  };
+  if (byId('removeBrandLogo')) byId('removeBrandLogo').onclick = async () => {
+    if(!confirm('Remove the uploaded email logo?')) return;
+    await act(async()=>{ await invoke('deleteBrandLogo'); state.message='Uploaded logo removed.'; await load(); });
   };
   if (byId('resetBranding')) byId('resetBranding').onclick = async () => {
     if (!confirm('Reset email branding to the System Alert defaults?')) return;
