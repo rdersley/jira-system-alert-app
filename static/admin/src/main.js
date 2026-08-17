@@ -1,7 +1,7 @@
 import { invoke } from '@forge/bridge';
 import './styles.css';
 
-const APP_VERSION = '3.7.1';
+const APP_VERSION = '3.7.7';
 const app = document.querySelector('#app');
 
 const state = {
@@ -10,7 +10,9 @@ const state = {
   message: '',
   error: '',
   busy: false,
-  activeSection: 'general'
+  activeSection: 'general',
+  activeTemplate: 'branding',
+  preview: null
 };
 
 const esc = (v = '') => String(v).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -30,7 +32,7 @@ function renderLoading() {
 
 function render() {
   if (!state.data) return renderLoading();
-  const { settings = {}, contacts = [], clientOptions = [], providerStatus = {}, providerSettings = {}, templates = {}, setupStatus = {} } = state.data;
+  const { settings = {}, contacts = [], clientOptions = [], providerStatus = {}, providerSettings = {}, templates = {}, branding = {}, setupStatus = {} } = state.data;
   const editing = state.editingId ? contacts.find(c => c.id === state.editingId) : null;
   const c = editing || {};
   const active = state.activeSection || 'general';
@@ -110,16 +112,17 @@ function render() {
 
     ${active === 'templates' ? `
     <section class="card templates-page">
-      <div class="card-head"><div><h2>Message templates</h2><p>Edit customer-facing wording without cluttering the main settings page.</p></div><button id="resetTemplates" class="btn secondary" type="button">Reset defaults</button></div>
-      <div class="card-body template-help"><strong>Available tokens:</strong> {{priority}}, {{jiraPriority}}, {{clientCode}}, {{issueKey}}, {{summary}}, {{startTime}}, {{nextUpdate}}, {{message}}, {{testMonth}}</div>
-      <form id="templateForm" class="card-body templates-grid">
-        ${renderTemplateEditor('initial','Initial alert', templates.initial)}
-        ${renderTemplateEditor('update','Incident update', templates.update)}
-        ${renderTemplateEditor('resolved','Service restored', templates.resolved)}
-        ${renderTemplateEditor('monthly-test','Monthly test', templates['monthly-test'])}
-        <div class="form-actions wide"><button class="btn primary" type="submit">Save templates</button></div>
-      </form>
-    </section>` : ''}
+      <div class="card-head"><div><h2>Branding & templates</h2><p>Control how System Alert emails look and edit the wording for each notification type.</p></div></div>
+      <div class="template-subnav">
+        ${templateNavButton('branding','Branding')}
+        ${templateNavButton('initial','Initial Alert')}
+        ${templateNavButton('update','Incident Update')}
+        ${templateNavButton('resolved','Service Restored')}
+        ${templateNavButton('monthly-test','Monthly Test')}
+      </div>
+      ${state.activeTemplate === 'branding' ? renderBrandingEditor(branding) : renderSingleTemplatePage(state.activeTemplate, templates[state.activeTemplate] || {})}
+    </section>
+    ${renderPreviewModal()}` : ''}
 
     ${active === 'contacts' ? `
     <section class="card ${editing ? 'editing' : ''}">
@@ -152,6 +155,95 @@ function render() {
 
 function navButton(key, label, active) {
   return `<button type="button" class="admin-nav-item ${active===key?'active':''}" data-section="${key}">${esc(label)}</button>`;
+}
+
+function templateNavButton(key, label) {
+  return `<button type="button" class="template-nav-item ${state.activeTemplate===key?'active':''}" data-template-section="${esc(key)}">${esc(label)}</button>`;
+}
+
+function renderBrandingEditor(b = {}) {
+  return `<form id="brandingForm" class="card-body branding-layout">
+    <div class="branding-form">
+      <div class="section-title"><h3>Email branding</h3><p>These settings are shared by every email template. Priority badges keep their configured incident colours.</p></div>
+      ${field('brandServiceName','Service / company name', b.serviceName || state.data.settings?.fromName || 'Service Desk', 'Service Desk')}
+      ${field('brandLogoUrl','Logo URL', b.logoUrl || '', 'https://example.com/logo.png','wide','url')}
+      <div class="colour-grid">
+        ${colorField('brandHeaderBackground','Header background',b.headerBackground || '#172B4D')}
+        ${colorField('brandHeaderText','Header text',b.headerText || '#FFFFFF')}
+        ${colorField('brandAccentColor','Brand accent',b.accentColor || '#0C66E4')}
+        ${colorField('brandPageBackground','Email background',b.pageBackground || '#F1F2F4')}
+        ${colorField('brandFooterBackground','Footer background',b.footerBackground || '#F7F8F9')}
+      </div>
+      <div class="field wide"><label for="brandFooterText">Footer text</label><textarea id="brandFooterText" rows="3">${esc(b.footerText || 'Please reference {{issueKey}} in any correspondence regarding this incident.')}</textarea><p class="help">You can use template tokens such as {{issueKey}} and {{clientCode}}.</p></div>
+      ${field('brandSupportLabel','Support link label', b.supportLabel || '', 'Contact Service Desk')}
+      ${field('brandSupportUrl','Support URL', b.supportUrl || '', 'https://support.example.com','','url')}
+      <div class="form-actions wide branding-actions"><button id="resetBranding" class="btn secondary" type="button">Reset branding</button><button id="previewBranding" class="btn secondary" type="button">Preview Email</button><button class="btn primary" type="submit">Save branding</button></div>
+    </div>
+    <aside class="branding-note"><strong>Branding applies automatically</strong><p>All Initial Alert, Incident Update, Service Restored and Monthly Test emails inherit these settings.</p><p>The HTML structure remains controlled by System Alert Manager so a wording or colour change cannot break the responsive email layout.</p></aside>
+  </form>`;
+}
+
+function renderSingleTemplatePage(key, template = {}) {
+  const labels = {initial:'Initial Alert',update:'Incident Update',resolved:'Service Restored','monthly-test':'Monthly Test'};
+  return `<div class="card-body template-help"><strong>Available tokens:</strong> {{priority}}, {{jiraPriority}}, {{clientCode}}, {{issueKey}}, {{summary}}, {{startTime}}, {{nextUpdate}}, {{message}}, {{testMonth}}</div>
+  <form id="singleTemplateForm" class="card-body single-template-layout" data-template-key="${esc(key)}">
+    <div class="template-editor-main"><div class="section-title"><h3>${esc(labels[key] || key)}</h3><p>Customize the customer-facing wording. Branding and responsive layout are inherited automatically.</p></div>
+      <div class="field"><label for="templateSubject">Email subject</label><input id="templateSubject" value="${esc(template.subject || '')}"></div>
+      <div class="field"><label for="templateIntro">Email introduction</label><textarea id="templateIntro" rows="5">${esc(template.intro || '')}</textarea></div>
+      <div class="field"><label for="templateFollowup">Email follow-up</label><textarea id="templateFollowup" rows="5">${esc(template.followup || '')}</textarea></div>
+      <div class="field"><label for="templateSms">SMS template</label><textarea id="templateSms" rows="12">${esc(template.sms || '')}</textarea><p class="help">SMS is capped at 700 characters after token replacement.</p></div>
+      <div class="form-actions"><button id="resetCurrentTemplate" class="btn secondary" type="button">Reset default</button><button id="previewSms" class="btn secondary" type="button">Preview SMS</button><button id="previewEmail" class="btn secondary" type="button">Preview Email</button><button class="btn primary" type="submit">Save Template</button></div>
+    </div>
+  </form>`;
+}
+
+function colorField(id,label,value){return `<div class="field color-control"><label for="${id}">${esc(label)}</label><div class="color-input"><input id="${id}" type="color" value="${esc(value)}"><span>${esc(value)}</span></div></div>`;}
+
+function collectBranding(){return {
+  serviceName:getValue('brandServiceName'), logoUrl:getValue('brandLogoUrl'), headerBackground:byId('brandHeaderBackground')?.value || '#172B4D', headerText:byId('brandHeaderText')?.value || '#FFFFFF', accentColor:byId('brandAccentColor')?.value || '#0C66E4', pageBackground:byId('brandPageBackground')?.value || '#F1F2F4', footerBackground:byId('brandFooterBackground')?.value || '#F7F8F9', footerText:byId('brandFooterText')?.value || '', supportLabel:getValue('brandSupportLabel'), supportUrl:getValue('brandSupportUrl')
+};}
+
+function collectCurrentTemplate(){return {subject:byId('templateSubject')?.value || '',intro:byId('templateIntro')?.value || '',followup:byId('templateFollowup')?.value || '',sms:byId('templateSms')?.value || ''};}
+
+function renderBrandedEmailPreview(model) {
+  if (!model) return '<div style="padding:24px">Preview data is unavailable.</div>';
+  const p = model.presentation || {};
+  const b = model.branding || {};
+  const isTest = model.alertType === 'monthly-test';
+  const isResolved = model.alertType === 'resolved';
+  const next = isResolved ? 'No further update planned' : (model.nextUpdate || 'To be confirmed');
+  const details = isTest
+    ? [['Reference', model.issueKey], ['Customer', model.clientCode], ['Test month', model.testMonth], ['Current status', p.status]]
+    : [['Reference', model.issueKey], ['Customer', model.clientCode], ['Priority', model.priorityLabel || model.priority], ['Issue Start Time', model.startTime || 'Not specified'], ['Next Update Due', next], ['Current status', p.status]];
+  const rows = details.map(([k,v],i) => {
+    const border = i < details.length - 1 ? 'border-bottom:1px solid #EBECF0;' : '';
+    const value = k === 'Priority' ? `<span style="display:inline-block;background:${esc(p.accent || '#AE2E24')};color:#fff;border-radius:999px;padding:4px 9px;font-size:12px;font-weight:700">${esc(v || '')}</span>` : esc(v || '');
+    return `<div style="display:grid;grid-template-columns:34% 1fr;${border}"><div style="padding:10px 12px;color:#626F86;font-size:12px">${esc(k)}</div><div style="padding:10px 12px;color:#172B4D;font-size:12px;font-weight:700">${value}</div></div>`;
+  }).join('');
+  const headerBg = b.headerBackground || '#172B4D';
+  const headerText = b.headerText || '#FFFFFF';
+  const pageBg = b.pageBackground || '#F1F2F4';
+  const footerBg = b.footerBackground || '#F7F8F9';
+  const accent = p.accent || '#AE2E24';
+  const soft = p.soft || '#FFECEB';
+  const brandAccent = b.accentColor || '#0C66E4';
+  const fromName = model.fromName || b.serviceName || 'Service Desk';
+  const logo = model.logoUrl ? `<img class="brand-logo" src="${esc(model.logoUrl)}" alt="" style="display:block;max-height:44px;max-width:190px;margin-bottom:13px;border:0">` : '';
+  const support = model.supportUrl ? `<div style="margin-top:6px"><a href="${esc(model.supportUrl)}" target="_blank" rel="noreferrer" style="color:${esc(brandAccent)};text-decoration:none">${esc(model.supportLabel || model.supportUrl)}</a></div>` : '';
+  return `<table class="admin-preview-bg" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${esc(pageBg)}"><tr><td><div class="admin-preview-card">
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${esc(headerBg)}"><tr><td class="admin-preview-header">${logo}<div style="font-size:11px;letter-spacing:1.4px;font-weight:700;opacity:.8"><font color="${esc(headerText)}">${esc(fromName.toUpperCase())}</font></div><div style="margin-top:8px;font-size:24px;font-weight:700;line-height:1.25"><font color="${esc(headerText)}">${esc(p.title || model.summary || 'System Alert')}</font></div></td></tr></table>
+    <div class="admin-preview-content"><span style="display:inline-block;background:${esc(accent)};color:#fff;border-radius:5px;padding:8px 13px;font-size:12px;font-weight:700">${esc(p.badge || `${model.priority} SYSTEM ALERT`)}</span><div style="margin-top:17px;font-size:14px;line-height:1.6">${esc(model.intro || p.intro || '')}</div></div>
+    ${isTest ? `<div style="margin:0 30px 20px;padding:14px 16px;background:${esc(soft)};border:1px solid ${esc(p.border || accent)};border-radius:8px;font-size:13px"><strong>TEST ONLY — NO LIVE SERVICE INCIDENT</strong><br>This message is part of the scheduled monthly System Alert test.</div>` : ''}
+    <div style="padding:4px 30px 20px"><div style="font-size:16px;font-weight:700;margin-bottom:10px">Incident details</div><div style="border:1px solid #DFE1E6;border-radius:8px;overflow:hidden">${rows}</div></div>
+    <div style="padding:0 30px 28px"><div style="background:${esc(soft)};border-left:4px solid ${esc(accent)};border-radius:6px;padding:16px 18px"><div style="font-size:15px;font-weight:700;margin-bottom:8px">${isTest ? 'Test details' : 'Current situation'}</div><div style="font-size:13px;line-height:1.6">${esc(model.message || '').replace(/\n/g,'<br>')}</div></div><div style="font-size:13px;line-height:1.6;margin-top:18px">${esc(model.followup || '')}</div></div>
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${esc(footerBg)}"><tr><td class="admin-preview-footer"><strong>${esc(fromName)}</strong><br>${esc(isTest ? 'Scheduled System Alert test.' : (model.footerText || ''))}${support}</td></tr></table>
+  </div></td></tr></table>`;
+}
+
+function renderPreviewModal(){
+  if(!state.preview)return '';
+  const isSms=state.preview.kind==='sms';
+  return `<div class="preview-backdrop"><div class="preview-modal"><div class="preview-head"><div><h3>${isSms?'SMS preview':'Email preview'}</h3>${!isSms&&state.preview.subject?`<p>${esc(state.preview.subject)}</p>`:''}</div><button id="closePreview" class="preview-close" type="button">×</button></div><div class="preview-body">${isSms?`<pre class="sms-preview">${esc(state.preview.sms||'')}</pre>`:`<div class="admin-email-preview">${renderBrandedEmailPreview(state.preview.model)}</div>`}</div></div></div>`;
 }
 
 function setupItem(label, ok, detail='') {
@@ -277,7 +369,15 @@ function settingsValue(id, fallback) { const el=byId(id); return el ? el.checked
 function getValue(id) { return byId(id)?.value?.trim() || ''; }
 
 function bindEvents() {
+  document.querySelectorAll('.brand-logo').forEach(img => {
+    const hide = () => { img.style.display = 'none'; };
+    img.addEventListener('error', hide, { once: true });
+    if (img.complete && !img.naturalWidth) hide();
+  });
   document.querySelectorAll('[data-section]').forEach(btn => btn.onclick = () => { state.activeSection = btn.dataset.section; state.editingId = null; state.message=''; state.error=''; render(); window.scrollTo({top:0,behavior:'smooth'}); });
+
+  document.querySelectorAll('[data-template-section]').forEach(btn => btn.onclick = () => { state.activeTemplate = btn.dataset.templateSection; state.preview=null; state.message=''; state.error=''; render(); });
+  if (byId('closePreview')) byId('closePreview').onclick = () => { state.preview=null; render(); };
 
   if (byId('settingsForm')) byId('settingsForm').onsubmit = async e => {
     e.preventDefault();
@@ -329,23 +429,28 @@ function bindEvents() {
     });
   };
 
-  if (byId('templateForm')) byId('templateForm').onsubmit = async e => {
+  if (byId('brandingForm')) byId('brandingForm').onsubmit = async e => {
     e.preventDefault();
-    await act(async () => {
-      await invoke('saveTemplates', collectTemplates());
-      state.message = 'Message templates saved.';
-      await load();
-    });
+    await act(async () => { await invoke('saveBranding', collectBranding()); state.message='Branding saved.'; await load(); });
   };
-
-  if (byId('resetTemplates')) byId('resetTemplates').onclick = async () => {
-    if (!confirm('Reset all email and SMS wording to the System Alert default templates?')) return;
-    await act(async () => {
-      await invoke('resetTemplates');
-      state.message = 'Message templates reset to defaults.';
-      await load();
-    });
+  if (byId('resetBranding')) byId('resetBranding').onclick = async () => {
+    if (!confirm('Reset email branding to the System Alert defaults?')) return;
+    await act(async () => { await invoke('resetBranding'); state.message='Branding reset to defaults.'; await load(); });
   };
+  const previewDraft = async (kind, key, template, branding) => {
+    await act(async () => { const result=await invoke('previewTemplate',{templateType:key,template,branding}); state.preview={kind,...result}; render(); });
+  };
+  if (byId('previewBranding')) byId('previewBranding').onclick = () => previewDraft('email','initial',state.data.templates?.initial || {},collectBranding());
+  if (byId('singleTemplateForm')) byId('singleTemplateForm').onsubmit = async e => {
+    e.preventDefault(); const key=byId('singleTemplateForm').dataset.templateKey; const all={...(state.data.templates||{}),[key]:collectCurrentTemplate()};
+    await act(async () => { await invoke('saveTemplates',all); state.message=`${key==='monthly-test'?'Monthly Test':key==='resolved'?'Service Restored':key==='update'?'Incident Update':'Initial Alert'} template saved.`; await load(); });
+  };
+  if (byId('resetCurrentTemplate')) byId('resetCurrentTemplate').onclick = async () => {
+    const key=byId('singleTemplateForm')?.dataset.templateKey; if(!key || !confirm('Reset this template to the System Alert default wording?')) return;
+    await act(async () => { const defaults=await invoke('resetTemplates'); const current={...(state.data.templates||{}),[key]:defaults[key]}; await invoke('saveTemplates',current); state.message='Template reset to default.'; await load(); });
+  };
+  if (byId('previewEmail')) byId('previewEmail').onclick = () => { const key=byId('singleTemplateForm').dataset.templateKey; previewDraft('email',key,collectCurrentTemplate(),state.data.branding||{}); };
+  if (byId('previewSms')) byId('previewSms').onclick = () => { const key=byId('singleTemplateForm').dataset.templateKey; previewDraft('sms',key,collectCurrentTemplate(),state.data.branding||{}); };
 
   if (byId('monthlyForm')) byId('monthlyForm').onsubmit = async e => {
     e.preventDefault();

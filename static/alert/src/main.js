@@ -1,7 +1,7 @@
 import { invoke, view } from '@forge/bridge';
 import './styles.css';
 
-const APP_VERSION = '3.6.1';
+const APP_VERSION = '3.7.7';
 const app = document.querySelector('#app');
 
 const state = {
@@ -170,6 +170,7 @@ function render() {
 function renderEmailPreview(model) {
   if (!model) return '<div class="email-preview-empty">Preview data is unavailable.</div>';
   const p = model.presentation || {};
+  const b = model.branding || {};
   const isTest = model.alertType === 'monthly-test';
   const isResolved = model.alertType === 'resolved';
   const next = isResolved ? 'No further update planned' : (model.nextUpdate || 'To be confirmed');
@@ -182,20 +183,23 @@ function renderEmailPreview(model) {
       : esc(v || '');
     return `<div class="email-detail-row"><div>${esc(k)}</div><strong>${renderedValue}</strong></div>`;
   }).join('');
-  const followup = isTest
-    ? 'No action is required unless acknowledgement is part of the agreed test process.'
-    : isResolved
-      ? 'No further incident updates are planned at this time. The Service Desk will continue to monitor the service.'
-      : 'Our support team is actively managing this incident. A further update will be provided by the time shown above, or sooner if there is a significant change.';
   const accent = p.accent || '#AE2E24';
   const soft = p.soft || '#FFECEB';
   const border = p.border || accent;
-  return `<div class="email-canvas">
+  const pageBg = b.pageBackground || '#F1F2F4';
+  const headerBg = b.headerBackground || '#172B4D';
+  const headerText = b.headerText || '#FFFFFF';
+  const footerBg = b.footerBackground || '#F7F8F9';
+  const brandAccent = b.accentColor || '#0C66E4';
+  const fromName = model.fromName || b.serviceName || 'Service Desk';
+  const logo = model.logoUrl ? `<img class="brand-logo" src="${esc(model.logoUrl)}" alt="" style="display:block;max-height:44px;max-width:190px;margin:0 0 13px;border:0">` : '';
+  const support = model.supportUrl ? `<div style="margin-top:6px"><a href="${esc(model.supportUrl)}" target="_blank" rel="noreferrer" style="color:${esc(brandAccent)};text-decoration:none">${esc(model.supportLabel || model.supportUrl)}</a></div>` : '';
+  return `<table class="email-preview-bg" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${esc(pageBg)}"><tr><td><div class="email-canvas">
     <div class="email-card">
-      <div class="email-brand"><div>${esc((model.fromName || 'Service Desk').toUpperCase())}</div><h2>${esc(p.title || model.summary || 'System Alert')}</h2></div>
+      <table width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${esc(headerBg)}"><tr><td class="email-brand">${logo}<div><font color="${esc(headerText)}">${esc(fromName.toUpperCase())}</font></div><h2><font color="${esc(headerText)}">${esc(p.title || model.summary || 'System Alert')}</font></h2></td></tr></table>
       <div class="email-content">
         <div class="email-badge" style="background:${esc(accent)}">${esc(p.badge || `${model.priority} SYSTEM ALERT`)}</div>
-        <p class="email-intro">${esc(p.intro || '')}</p>
+        <p class="email-intro">${esc(model.intro || p.intro || '')}</p>
         ${isTest ? `<div class="email-test" style="background:${esc(soft)};border-color:${esc(border)}"><strong>TEST ONLY — NO LIVE SERVICE INCIDENT</strong><br>This message is part of the scheduled monthly System Alert test.</div>` : ''}
         <h3>Incident details</h3>
         <div class="email-details">${rows}</div>
@@ -203,11 +207,11 @@ function renderEmailPreview(model) {
           <h3>${isTest ? 'Test details' : 'Current situation'}</h3>
           <div>${esc(model.message || '').replace(/\n/g,'<br>')}</div>
         </div>
-        <p class="email-followup">${esc(followup)}</p>
+        <p class="email-followup">${esc(model.followup || '')}</p>
       </div>
-      <div class="email-footer"><strong>${esc(model.fromName || 'Service Desk')}</strong><br>${isTest ? `Scheduled System Alert test · Reference ${esc(model.issueKey)}` : `Please reference ${esc(model.issueKey)} in any correspondence regarding this incident.`}</div>
+      <table width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${esc(footerBg)}"><tr><td class="email-footer"><strong>${esc(fromName)}</strong><br>${esc(isTest ? 'Scheduled System Alert test.' : (model.footerText || `Please reference ${model.issueKey} in any correspondence regarding this incident.`))}${support}</td></tr></table>
     </div>
-  </div>`;
+  </div></td></tr></table>`;
 }
 
 function typeButton(type, title, sub, extra='') {
@@ -226,6 +230,11 @@ function contactRow(c) {
 }
 
 function bindEvents() {
+  document.querySelectorAll('.brand-logo').forEach(img => {
+    const hide = () => { img.style.display = 'none'; };
+    img.addEventListener('error', hide, { once: true });
+    if (img.complete && !img.naturalWidth) hide();
+  });
   document.querySelectorAll('[data-type]').forEach(b => b.onclick = () => {
     const message = byId('message')?.value ?? state.draft.message;
     state.draft.startTime = byId('startTime')?.value ?? state.draft.startTime;

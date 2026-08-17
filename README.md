@@ -1,4 +1,4 @@
-# System Alert Manager v3.7.1
+# System Alert Manager v3.7.7
 
 Marketplace-readiness configuration release based on the working v3.6.1 build.
 
@@ -33,3 +33,39 @@ To migrate later, open System Alert Contacts > Communication providers and save 
 
 ## v3.7.1
 Admin configuration is now split into General, Clients & Contacts, Communication Providers, Templates, and Monthly Test sections. Sending logic and provider storage remain unchanged.
+
+
+## v3.7.3
+
+Branding and focused template management release.
+
+- Added a dedicated Branding sub-section under Templates.
+- Configure service/company name, logo URL, header colours, brand accent, email background, footer background, footer text and optional support link.
+- Branding is inherited by all HTML alert emails without allowing administrators to break the responsive email structure.
+- Templates are edited one alert type at a time: Initial Alert, Incident Update, Service Restored and Monthly Test.
+- Added Preview Email and Preview SMS actions using sample incident data before saving.
+- Added per-template reset to default and branding reset to default.
+- No new Forge scopes. Existing SendGrid, Twilio, client isolation and Jira configuration remain unchanged.
+
+## v3.7.3 preview fixes
+- Branding is now applied to the admin Template/Branding email preview without relying on a nested iframe.
+- Ticket-side Email Preview now uses the saved branding, logo URL, colours, footer and support link.
+- Alert and issue-panel version labels now match the installed app release.
+
+
+## v3.7.4 preview consistency
+- Admin email previews now display the exact HTML produced by the same backend renderer used for outgoing email.
+- Ticket preview and admin preview remain aligned with saved branding and templates.
+- Broken logo images are hidden in browser previews instead of showing a broken-image icon.
+- No changes to delivery provider configuration or recipient logic.
+
+
+## v3.7.7 branding preview fix
+- Ticket email preview no longer overrides saved header/footer branding colours with hard-coded CSS.
+- Alert, admin, panel, backend and package version markers aligned to 3.7.7.
+
+
+## v3.7.7 branding polish
+- Header text colour now applies consistently to the service name and incident title in both admin and ticket previews.
+- Preview logos that fail to load are hidden cleanly instead of showing a broken-image icon.
+- Runtime version labels are aligned at v3.7.7.

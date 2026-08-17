@@ -1,34 +1,35 @@
-System Alert Manager v3.7.1 upgrade
+System Alert Manager v3.7.7 upgrade
 
-1. Start from your committed v3.6.1 GitHub working folder.
-2. Copy the contents of this package over the existing registered Forge app. Do NOT run forge register.
-3. Build all Custom UI resources:
+1. Extract this package over your existing GitHub-controlled app folder:
+   C:\jiraapps\jira-system-alert-app
 
-cd C:\jiraapps\jira-system-alert-app\static\alert
-npm install
-npm run build
-cd ..\admin
-npm install
-npm run build
-cd ..\panel
-npm install
-npm run build
+2. Build the alert UI:
+   cd C:\jiraapps\jira-system-alert-app\static\alert
+   npm install
+   npm run build
 
-4. Return to the app root and validate:
-cd C:\jiraapps\jira-system-alert-app
-npm install
-forge lint
+3. Build the admin UI:
+   cd ..\admin
+   npm install
+   npm run build
 
-5. If lint is clean, commit/push v3.7.1 to GitHub before deployment.
-6. Deploy:
-forge deploy
+4. Build the issue panel:
+   cd ..\panel
+   npm install
+   npm run build
 
-v3.7.1 uses the same Forge scopes as the corrected v3.6.1 installation, including manage:jira-configuration. A new major-version approval should not normally be required if v3.6.1 was already upgraded with that scope.
+5. Validate from the app root:
+   cd C:\jiraapps\jira-system-alert-app
+   npm install
+   forge lint
 
-7. Open System Alert Contacts and confirm v3.7.1.
-8. Check Setup status.
-9. Existing SendGrid/Twilio Forge environment variables continue to work. You may optionally migrate them into Communication providers.
-10. Test template changes with Preview Email before sending a live incident alert.
+6. If lint is clean, commit/push v3.7.7 to GitHub before deployment.
 
+7. Deploy:
+   forge deploy
+   forge install --upgrade
+   forge install list
 
-v3.7.1 UI change: Templates and other configuration areas are now separated by an in-app settings navigation. No new Forge scopes are introduced.
+No new Forge scopes are introduced by v3.7.7, so another major-version permission approval should not normally be required.
+
+After deployment open System Alert Manager > Templates. Confirm the Branding, Initial Alert, Incident Update, Service Restored and Monthly Test sub-menu items load, then test Preview Email and Preview SMS before changing live wording.

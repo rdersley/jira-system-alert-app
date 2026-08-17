@@ -9,6 +9,7 @@ const AUTO_TEST_PREFIX = 'system-alert:auto-test:';
 const DISPLAY_PROPERTY_KEY = 'system-alert-display';
 const PROVIDER_SETTINGS_KEY = 'system-alert:providers';
 const TEMPLATE_SETTINGS_KEY = 'system-alert:templates';
+const BRANDING_SETTINGS_KEY = 'system-alert:branding';
 const PROVIDER_SECRET_KEYS = {
   sendgridApiKey: 'system-alert:provider:sendgrid-api-key',
   twilioAccountSid: 'system-alert:provider:twilio-account-sid',
@@ -16,7 +17,7 @@ const PROVIDER_SECRET_KEYS = {
   twilioApiKey: 'system-alert:provider:twilio-api-key',
   twilioApiSecret: 'system-alert:provider:twilio-api-secret'
 };
-const APP_VERSION = '3.7.1';
+const APP_VERSION = '3.7.7';
 
 const DEFAULT_SETTINGS = {
   clientFieldId: '',
@@ -45,6 +46,19 @@ const DEFAULT_PROVIDER_SETTINGS = {
   twilioRegion: 'global',
   twilioFromNumber: '',
   twilioMessagingServiceSid: ''
+};
+
+const DEFAULT_BRANDING = {
+  serviceName: 'Service Desk',
+  logoUrl: '',
+  headerBackground: '#172B4D',
+  headerText: '#FFFFFF',
+  accentColor: '#0C66E4',
+  pageBackground: '#F1F2F4',
+  footerBackground: '#F7F8F9',
+  footerText: 'Please reference {{issueKey}} in any correspondence regarding this incident.',
+  supportLabel: '',
+  supportUrl: ''
 };
 
 const DEFAULT_TEMPLATES = {
@@ -127,6 +141,30 @@ async function getTemplates() {
   const out = {};
   for (const [key, defaults] of Object.entries(DEFAULT_TEMPLATES)) out[key] = { ...defaults, ...(stored[key] || {}) };
   return out;
+}
+
+async function getBranding() {
+  return { ...DEFAULT_BRANDING, ...((await kvs.get(BRANDING_SETTINGS_KEY)) || {}) };
+}
+
+function normalizeHexColor(value, fallback) {
+  const v = normalizeTextValue(value);
+  return /^#[0-9A-F]{6}$/i.test(v) ? v.toUpperCase() : fallback;
+}
+
+function normalizeBranding(value = {}) {
+  return {
+    serviceName: normalizeTextValue(value.serviceName || DEFAULT_BRANDING.serviceName).slice(0, 80),
+    logoUrl: normalizeTextValue(value.logoUrl).slice(0, 500),
+    headerBackground: normalizeHexColor(value.headerBackground, DEFAULT_BRANDING.headerBackground),
+    headerText: normalizeHexColor(value.headerText, DEFAULT_BRANDING.headerText),
+    accentColor: normalizeHexColor(value.accentColor, DEFAULT_BRANDING.accentColor),
+    pageBackground: normalizeHexColor(value.pageBackground, DEFAULT_BRANDING.pageBackground),
+    footerBackground: normalizeHexColor(value.footerBackground, DEFAULT_BRANDING.footerBackground),
+    footerText: normalizeTextValue(value.footerText || DEFAULT_BRANDING.footerText).slice(0, 500),
+    supportLabel: normalizeTextValue(value.supportLabel).slice(0, 80),
+    supportUrl: normalizeTextValue(value.supportUrl).slice(0, 500)
+  };
 }
 
 function templateType(alertType='initial') {
@@ -337,6 +375,7 @@ resolver.define('getAdminData', async () => {
   try { await syncDisplayProperty(settings); } catch (e) { console.warn('Could not sync display property:', e.message); }
   const providers = await getProviderSettings();
   const templates = await getTemplates();
+  const branding = await getBranding();
   const pStatus = await providerStatus();
   const setupStatus = {
     jira: Boolean(settings.allowedProjectKey && settings.clientFieldId && settings.priorityConfigs?.length),
@@ -345,7 +384,7 @@ resolver.define('getAdminData', async () => {
     sms: pStatus.sms.configured,
     contacts: contacts.length
   };
-  return { settings, contacts, clientOptions, providerSettings: providers, templates, providerStatus: pStatus, setupStatus, autoTestStatus, appVersion: APP_VERSION };
+  return { settings, contacts, clientOptions, providerSettings: providers, templates, branding, providerStatus: pStatus, setupStatus, autoTestStatus, appVersion: APP_VERSION };
 });
 
 resolver.define('saveSettings', async ({ payload }) => {
@@ -407,6 +446,48 @@ resolver.define('saveTemplates', async ({ payload }) => {
 resolver.define('resetTemplates', async () => {
   await kvs.delete(TEMPLATE_SETTINGS_KEY);
   return await getTemplates();
+});
+
+resolver.define('saveBranding', async ({ payload }) => {
+  const branding = normalizeBranding(payload || {});
+  await kvs.set(BRANDING_SETTINGS_KEY, branding);
+  return branding;
+});
+
+resolver.define('resetBranding', async () => {
+  await kvs.delete(BRANDING_SETTINGS_KEY);
+  return await getBranding();
+});
+
+resolver.define('previewTemplate', async ({ payload }) => {
+  const type = templateType(payload?.templateType || 'initial');
+  const templates = await getTemplates();
+  const draftTemplate = payload?.template || {};
+  const mergedTemplates = { ...templates, [type]: { ...templates[type], ...draftTemplate } };
+  const branding = normalizeBranding(payload?.branding || await getBranding());
+  const settings = await getSettings();
+  const priorityConfig = getPriorityConfig(settings, 'P1');
+  const a = {
+    alertType: type,
+    issueKey: 'SD-12345',
+    clientCode: 'CLIENT',
+    priority: 'P1',
+    priorityLabel: priorityConfig.label || 'P1',
+    priorityConfig,
+    summary: 'Example customer-facing incident',
+    startTime: '17 Aug 2026 09:00',
+    nextUpdate: '10:00 Irish time',
+    message: type === 'monthly-test' ? 'Scheduled monthly communications test.' : 'Customers are currently experiencing an interruption to the affected service.',
+    testMonth: 'August 2026',
+    fromName: branding.serviceName || settings.fromName || 'Service Desk'
+  };
+  return {
+    subject: buildEmailSubject(a, mergedTemplates),
+    html: buildEmailHtml(a, mergedTemplates, branding),
+    text: buildEmailText(a, mergedTemplates),
+    sms: buildSmsText(a, mergedTemplates),
+    model: buildPreviewModel(a, mergedTemplates, branding)
+  };
 });
 
 resolver.define('saveContact', async ({ payload }) => {
@@ -561,6 +642,42 @@ function emailPresentation(a) {
   };
 }
 
+
+function buildPreviewModel(a, templates = DEFAULT_TEMPLATES, brandingInput = DEFAULT_BRANDING) {
+  const p = emailPresentation(a);
+  const branding = normalizeBranding(brandingInput || DEFAULT_BRANDING);
+  const type = templateType(a.alertType);
+  const template = templates?.[type] || {};
+  const isTest = a.alertType === 'monthly-test';
+  const isResolved = a.alertType === 'resolved';
+  const defaultFollowup = isTest
+    ? 'No action is required unless acknowledgement is part of the agreed test process.'
+    : isResolved
+      ? 'No further incident updates are planned at this time. The Service Desk will continue to monitor the service.'
+      : 'Our support team is actively managing this incident. A further update will be provided by the time shown above, or sooner if there is a significant change.';
+  return {
+    issueKey: a.issueKey,
+    clientCode: a.clientCode,
+    priority: a.priority,
+    priorityLabel: a.priorityLabel || a.priority,
+    summary: a.summary,
+    alertType: a.alertType,
+    startTime: a.startTime,
+    nextUpdate: a.nextUpdate,
+    message: a.message,
+    testMonth: a.testMonth,
+    fromName: branding.serviceName || a.fromName || 'Service Desk',
+    presentation: p,
+    branding,
+    intro: renderTemplate(template.intro || p.intro, a),
+    followup: renderTemplate(template.followup || defaultFollowup, a),
+    footerText: renderTemplate(branding.footerText || DEFAULT_BRANDING.footerText, a),
+    supportLabel: branding.supportLabel || '',
+    supportUrl: branding.supportUrl || '',
+    logoUrl: branding.logoUrl || ''
+  };
+}
+
 function subjectSummary(a) {
   const summary = String(a.summary || '').trim();
   const client = String(a.clientCode || '').trim();
@@ -627,12 +744,13 @@ ${followup}
 Please reference ${a.issueKey} in any correspondence regarding this incident.`;
 }
 
-function buildEmailHtml(a, templates = DEFAULT_TEMPLATES) {
+function buildEmailHtml(a, templates = DEFAULT_TEMPLATES, brandingInput = DEFAULT_BRANDING) {
   const p = emailPresentation(a);
+  const branding = normalizeBranding(brandingInput || DEFAULT_BRANDING);
   const isTest = a.alertType === 'monthly-test';
   const isResolved = a.alertType === 'resolved';
   const next = isResolved ? 'No further update planned' : (a.nextUpdate || 'To be confirmed');
-  const fromName = a.fromName || 'Service Desk';
+  const fromName = branding.serviceName || a.fromName || 'Service Desk';
   const details = isTest
     ? [ ...(a.issueKey ? [['Reference', a.issueKey]] : []), ['Customer', a.clientCode], ['Test month', a.testMonth || monthLabel()], ['Current status', p.status] ]
     : [ ['Reference', a.issueKey], ['Customer', a.clientCode], ['Priority', a.priorityLabel || a.priority], ['Issue Start Time', a.startTime || 'Not specified'], ['Next Update Due', next], ['Current status', p.status] ];
@@ -649,7 +767,15 @@ function buildEmailHtml(a, templates = DEFAULT_TEMPLATES) {
   const defaultFollowup = isTest ? 'No action is required unless acknowledgement is part of the agreed test process.' : isResolved ? 'No further incident updates are planned at this time. The Service Desk will continue to monitor the service.' : 'Our support team is actively managing this incident. A further update will be provided by the time shown above, or sooner if there is a significant change.';
   const followup = renderTemplate(template.followup || defaultFollowup, a);
 
-  return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="margin:0;padding:0;background:#F1F2F4;font-family:Arial,Helvetica,sans-serif;color:#172B4D"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F1F2F4"><tr><td align="center" style="padding:28px 12px"><table role="presentation" width="680" cellpadding="0" cellspacing="0" style="width:100%;max-width:680px;background:#FFFFFF;border:1px solid #DFE1E6;border-radius:12px;overflow:hidden"><tr><td style="background:#172B4D;padding:25px 32px"><div style="font-size:12px;line-height:1.2;letter-spacing:1.5px;font-weight:700;color:#B3B9C4">${esc(fromName.toUpperCase())}</div><div style="margin-top:8px;font-size:25px;line-height:1.25;font-weight:700;color:#FFFFFF">${esc(p.title)}</div></td></tr><tr><td style="padding:24px 32px 14px"><div style="display:inline-block;background:${p.accent};color:#FFFFFF;border-radius:5px;padding:9px 14px;font-size:13px;line-height:1.2;font-weight:700;letter-spacing:.3px">${esc(p.badge)}</div><div style="margin-top:18px;font-size:15px;line-height:1.6;color:#172B4D">${esc(intro)}</div></td></tr>${alertBox}<tr><td style="padding:4px 32px 20px"><div style="font-size:16px;font-weight:700;margin-bottom:10px">Incident details</div><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #DFE1E6;border-radius:8px;border-collapse:separate;border-spacing:0;overflow:hidden">${rows}</table></td></tr><tr><td style="padding:0 32px 28px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${p.soft};border-left:4px solid ${p.accent};border-radius:6px"><tr><td style="padding:17px 18px"><div style="font-size:16px;font-weight:700;margin-bottom:9px">${isTest?'Test details':'Current situation'}</div><div style="font-size:14px;line-height:1.65;white-space:pre-line">${esc(a.message || '')}</div></td></tr></table><div style="font-size:14px;line-height:1.6;margin-top:20px">${esc(followup)}</div></td></tr><tr><td style="background:#F7F8F9;border-top:1px solid #EBECF0;padding:19px 32px;color:#626F86;font-size:12px;line-height:1.55"><strong style="color:#44546F">${esc(fromName)}</strong><br>${isTest ? `Scheduled System Alert test · Reference ${esc(a.issueKey)}` : `Please reference ${esc(a.issueKey)} in any correspondence regarding this incident.`}</td></tr></table></td></tr></table></body></html>`;
+  const logo = branding.logoUrl
+    ? `<img src="${esc(branding.logoUrl)}" alt="" style="display:block;max-height:44px;max-width:190px;margin-bottom:13px;border:0">`
+    : '';
+  const support = branding.supportUrl
+    ? `<div style="margin-top:6px"><a href="${esc(branding.supportUrl)}" style="color:${branding.accentColor};text-decoration:none">${esc(branding.supportLabel || branding.supportUrl)}</a></div>`
+    : '';
+  const footerText = renderTemplate(branding.footerText || DEFAULT_BRANDING.footerText, a);
+
+  return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="margin:0;padding:0;background:${branding.pageBackground};font-family:Arial,Helvetica,sans-serif;color:#172B4D"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${branding.pageBackground}"><tr><td align="center" style="padding:28px 12px"><table role="presentation" width="680" cellpadding="0" cellspacing="0" style="width:100%;max-width:680px;background:#FFFFFF;border:1px solid #DFE1E6;border-radius:12px;overflow:hidden"><tr><td style="background:${branding.headerBackground};padding:25px 32px">${logo}<div style="font-size:12px;line-height:1.2;letter-spacing:1.5px;font-weight:700;color:${branding.headerText};opacity:.75">${esc(fromName.toUpperCase())}</div><div style="margin-top:8px;font-size:25px;line-height:1.25;font-weight:700;color:${branding.headerText}">${esc(p.title)}</div></td></tr><tr><td style="padding:24px 32px 14px"><div style="display:inline-block;background:${p.accent};color:#FFFFFF;border-radius:5px;padding:9px 14px;font-size:13px;line-height:1.2;font-weight:700;letter-spacing:.3px">${esc(p.badge)}</div><div style="margin-top:18px;font-size:15px;line-height:1.6;color:#172B4D">${esc(intro)}</div></td></tr>${alertBox}<tr><td style="padding:4px 32px 20px"><div style="font-size:16px;font-weight:700;margin-bottom:10px">Incident details</div><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #DFE1E6;border-radius:8px;border-collapse:separate;border-spacing:0;overflow:hidden">${rows}</table></td></tr><tr><td style="padding:0 32px 28px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${p.soft};border-left:4px solid ${p.accent};border-radius:6px"><tr><td style="padding:17px 18px"><div style="font-size:16px;font-weight:700;margin-bottom:9px">${isTest?'Test details':'Current situation'}</div><div style="font-size:14px;line-height:1.65;white-space:pre-line">${esc(a.message || '')}</div></td></tr></table><div style="font-size:14px;line-height:1.6;margin-top:20px">${esc(followup)}</div></td></tr><tr><td style="background:${branding.footerBackground};border-top:1px solid #EBECF0;padding:19px 32px;color:#626F86;font-size:12px;line-height:1.55"><strong style="color:#44546F">${esc(fromName)}</strong><br>${esc(isTest ? 'Scheduled System Alert test.' : footerText)}${support}</td></tr></table></td></tr></table></body></html>`;
 }
 
 function buildSmsText(a, templates = DEFAULT_TEMPLATES) {
@@ -751,25 +877,13 @@ resolver.define('previewEmail', async ({ payload }) => {
   const nextUpdate = payload.nextUpdate || (settings.nextUpdateFieldId ? formatDateTime(fieldText(currentIssue.fields[settings.nextUpdateFieldId])) : '');
   const a = { ...payload, clientCode: currentClientCode, startTime, nextUpdate, priority: currentPriority, priorityLabel: currentPriorityConfig.label, priorityConfig: currentPriorityConfig, fromName: settings.fromName, testMonth: payload.testMonth || monthLabel() };
   const templates = await getTemplates();
+  const branding = await getBranding();
   const presentation = emailPresentation(a);
   return {
     subject: buildEmailSubject(a, templates),
-    html: buildEmailHtml(a, templates),
+    html: buildEmailHtml(a, templates, branding),
     text: buildEmailText(a, templates),
-    model: {
-      issueKey: a.issueKey,
-      clientCode: a.clientCode,
-      priority: a.priority,
-      priorityLabel: a.priorityLabel || a.priority,
-      summary: a.summary,
-      alertType: a.alertType,
-      startTime: a.startTime,
-      nextUpdate: a.nextUpdate,
-      message: a.message,
-      testMonth: a.testMonth,
-      fromName: a.fromName,
-      presentation
-    }
+    model: buildPreviewModel(a, templates, branding)
   };
 });
 
@@ -817,9 +931,10 @@ resolver.define('sendAlert', async ({ payload, context }) => {
 
   const a = { ...payload, priorityLabel: currentPriorityConfig.label, priorityConfig: currentPriorityConfig, fromName: settings.fromName, testMonth: payload.testMonth || monthLabel() };
   const templates = await getTemplates();
+  const branding = await getBranding();
   const subject = buildEmailSubject(a, templates);
   const text = buildEmailText(a, templates);
-  const html = buildEmailHtml(a, templates);
+  const html = buildEmailHtml(a, templates, branding);
 
   const emailRecipients = payload.sendEmail
     ? [...new Set(eligibleContacts.filter(c => c.email && c.emailAlerts).map(c => c.email))]
@@ -939,9 +1054,10 @@ export async function monthlyTestScheduler() {
         startTime: '', nextUpdate: '', testMonth: label, fromName: settings.fromName
       };
       const templates = await getTemplates();
+      const branding = await getBranding();
       const subject = buildEmailSubject(a, templates);
       const text = buildEmailText(a, templates);
-      const html = buildEmailHtml(a, templates);
+      const html = buildEmailHtml(a, templates, branding);
       let emailOk = false;
       if (emailRecipients.length) {
         await sendEmail(emailRecipients, subject, html, text, settings.fromName, settings.replyToEmail);
