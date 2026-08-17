@@ -7,7 +7,16 @@ const CONTACT_INDEX = 'system-alert:contacts:index';
 const SETTINGS_KEY = 'system-alert:settings';
 const AUTO_TEST_PREFIX = 'system-alert:auto-test:';
 const DISPLAY_PROPERTY_KEY = 'system-alert-display';
-const APP_VERSION = '3.6.1';
+const PROVIDER_SETTINGS_KEY = 'system-alert:providers';
+const TEMPLATE_SETTINGS_KEY = 'system-alert:templates';
+const PROVIDER_SECRET_KEYS = {
+  sendgridApiKey: 'system-alert:provider:sendgrid-api-key',
+  twilioAccountSid: 'system-alert:provider:twilio-account-sid',
+  twilioAuthToken: 'system-alert:provider:twilio-auth-token',
+  twilioApiKey: 'system-alert:provider:twilio-api-key',
+  twilioApiSecret: 'system-alert:provider:twilio-api-secret'
+};
+const APP_VERSION = '3.7.1';
 
 const DEFAULT_SETTINGS = {
   clientFieldId: '',
@@ -25,6 +34,44 @@ const DEFAULT_SETTINGS = {
   emailEnabled: true,
   smsEnabled: true,
   twilioRegion: 'global'
+};
+
+const DEFAULT_PROVIDER_SETTINGS = {
+  emailProvider: 'sendgrid',
+  sendgridFromEmail: '',
+  sendgridFromName: 'Service Desk',
+  sendgridReplyToEmail: '',
+  smsProvider: 'twilio',
+  twilioRegion: 'global',
+  twilioFromNumber: '',
+  twilioMessagingServiceSid: ''
+};
+
+const DEFAULT_TEMPLATES = {
+  initial: {
+    subject: '{{priority}} SYSTEM ALERT | {{clientCode}} | {{issueKey}} | {{summary}}',
+    intro: 'A {{priority}} issue has been identified and our priority escalation process has been initiated.',
+    followup: 'Our support team is actively managing this incident. A further update will be provided by the time shown above, or sooner if there is a significant change.',
+    sms: 'Hi,\n\nA {{priority}} issue has been identified.\n\nIssue Start Time: {{startTime}}\n\nIssue: {{message}}\n\nNext Update Due: {{nextUpdate}}\n\nOur priority escalation process has started and a further update will follow shortly.\n\nMany Thanks'
+  },
+  update: {
+    subject: '{{priority}} UPDATE | {{clientCode}} | {{issueKey}} | {{summary}}',
+    intro: 'An update is available for this {{priority}} incident.',
+    followup: 'Our support team is actively managing this incident. A further update will be provided by the time shown above, or sooner if there is a significant change.',
+    sms: 'Hi,\n\nAn update is available for the {{priority}} issue.\n\nIssue Start Time: {{startTime}}\n\nIssue: {{message}}\n\nNext Update Due: {{nextUpdate}}\n\nOur priority escalation process remains active and a further update will follow shortly.\n\nMany Thanks'
+  },
+  resolved: {
+    subject: 'SERVICE RESTORED | {{clientCode}} | {{issueKey}} | {{summary}}',
+    intro: 'The {{priority}} incident has been resolved and service has been restored.',
+    followup: 'No further incident updates are planned at this time. The Service Desk will continue to monitor the service.',
+    sms: 'Hi,\n\nThe {{priority}} issue has now been resolved.\n\nIssue Start Time: {{startTime}}\n\nIssue: {{message}}\n\nService Status: Restored\n\nNo further updates are planned at this time.\n\nMany Thanks'
+  },
+  'monthly-test': {
+    subject: 'TEST ONLY | MONTHLY SYSTEM ALERT TEST | {{clientCode}} | {{testMonth}}',
+    intro: 'This is a scheduled test of the Service Desk System Alert service. There is no live service incident.',
+    followup: 'No action is required unless acknowledgement is part of the agreed test process.',
+    sms: 'Hi,\n\nThis is the scheduled monthly System Alert test for {{clientCode}}.\n\nThere is no live service incident.\n\nTest Month: {{testMonth}}\n{{referenceLine}}\nNo action is required unless acknowledgement is part of the agreed test process.\n\nMany Thanks'
+  }
 };
 
 const safeId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
@@ -64,6 +111,49 @@ async function getSettings() {
   const settings = { ...DEFAULT_SETTINGS, ...((await kvs.get(SETTINGS_KEY)) || {}) };
   settings.priorityConfigs = normalizePriorityConfigs(settings.priorityConfigs);
   return settings;
+}
+
+async function getProviderSettings() {
+  return { ...DEFAULT_PROVIDER_SETTINGS, ...((await kvs.get(PROVIDER_SETTINGS_KEY)) || {}) };
+}
+
+async function getProviderSecret(name) {
+  const key = PROVIDER_SECRET_KEYS[name];
+  return key ? (await kvs.getSecret(key)) || '' : '';
+}
+
+async function getTemplates() {
+  const stored = (await kvs.get(TEMPLATE_SETTINGS_KEY)) || {};
+  const out = {};
+  for (const [key, defaults] of Object.entries(DEFAULT_TEMPLATES)) out[key] = { ...defaults, ...(stored[key] || {}) };
+  return out;
+}
+
+function templateType(alertType='initial') {
+  return ['initial','update','resolved','monthly-test'].includes(alertType) ? alertType : 'initial';
+}
+
+function templateContext(a = {}) {
+  const summary = subjectSummary(a);
+  const startTime = a.startTime || 'Not specified';
+  const nextUpdate = a.alertType === 'resolved' ? 'No further update planned' : (a.nextUpdate || 'To be confirmed');
+  return {
+    priority: a.priorityLabel || a.priority || 'Priority',
+    jiraPriority: a.priority || '',
+    clientCode: a.clientCode || '',
+    issueKey: a.issueKey || '',
+    summary,
+    startTime,
+    nextUpdate,
+    message: a.message || a.summary || '',
+    testMonth: a.testMonth || monthLabel(),
+    referenceLine: a.issueKey ? `Reference: ${a.issueKey}\n` : ''
+  };
+}
+
+function renderTemplate(value, a = {}) {
+  const ctx = templateContext(a);
+  return String(value || '').replace(/{{\s*([a-zA-Z0-9]+)\s*}}/g, (_, key) => Object.prototype.hasOwnProperty.call(ctx, key) ? String(ctx[key] ?? '') : `{{${key}}}`);
 }
 
 async function getContact(id) { return await kvs.getSecret(`system-alert:contact:${id}`); }
@@ -165,10 +255,16 @@ async function getClientOptions(fieldId) {
   }
   return options.sort((a,b) => a.value.localeCompare(b.value));
 }
-function providerStatus() {
+async function providerStatus() {
+  const cfg = await getProviderSettings();
+  const sendgridApiKey = (await getProviderSecret('sendgridApiKey')) || process.env.SENDGRID_API_KEY || '';
+  const sendgridFromEmail = cfg.sendgridFromEmail || process.env.ALERT_FROM_EMAIL || '';
+  const twilioAccountSid = (await getProviderSecret('twilioAccountSid')) || process.env.TWILIO_ACCOUNT_SID || '';
+  const twilioPassword = (await getProviderSecret('twilioApiSecret')) || (await getProviderSecret('twilioAuthToken')) || process.env.TWILIO_API_SECRET || process.env.TWILIO_AUTH_TOKEN || '';
+  const twilioSender = cfg.twilioMessagingServiceSid || cfg.twilioFromNumber || process.env.TWILIO_MESSAGING_SERVICE_SID || process.env.TWILIO_FROM_NUMBER || '';
   return {
-    email: { configured: Boolean(process.env.SENDGRID_API_KEY && process.env.ALERT_FROM_EMAIL), provider: 'SendGrid', from: process.env.ALERT_FROM_EMAIL || '' },
-    sms: { configured: Boolean(process.env.TWILIO_ACCOUNT_SID && (process.env.TWILIO_API_SECRET || process.env.TWILIO_AUTH_TOKEN) && (process.env.TWILIO_FROM_NUMBER || process.env.TWILIO_MESSAGING_SERVICE_SID)), provider: 'Twilio' }
+    email: { configured: Boolean(sendgridApiKey && sendgridFromEmail), provider: 'SendGrid', from: sendgridFromEmail, source: (await getProviderSecret('sendgridApiKey')) ? 'App settings' : (process.env.SENDGRID_API_KEY ? 'Forge environment' : '') },
+    sms: { configured: Boolean(twilioAccountSid && twilioPassword && twilioSender), provider: 'Twilio', sender: twilioSender, source: (await getProviderSecret('twilioAccountSid')) ? 'App settings' : (process.env.TWILIO_ACCOUNT_SID ? 'Forge environment' : '') }
   };
 }
 
@@ -239,7 +335,17 @@ resolver.define('getAdminData', async () => {
   // Keep Jira display conditions in sync with the admin configuration.
   // This also seeds the property automatically after upgrading from an older version.
   try { await syncDisplayProperty(settings); } catch (e) { console.warn('Could not sync display property:', e.message); }
-  return { settings, contacts, clientOptions, providerStatus: providerStatus(), autoTestStatus, appVersion: APP_VERSION };
+  const providers = await getProviderSettings();
+  const templates = await getTemplates();
+  const pStatus = await providerStatus();
+  const setupStatus = {
+    jira: Boolean(settings.allowedProjectKey && settings.clientFieldId && settings.priorityConfigs?.length),
+    clients: clientOptions.length > 0,
+    email: pStatus.email.configured,
+    sms: pStatus.sms.configured,
+    contacts: contacts.length
+  };
+  return { settings, contacts, clientOptions, providerSettings: providers, templates, providerStatus: pStatus, setupStatus, autoTestStatus, appVersion: APP_VERSION };
 });
 
 resolver.define('saveSettings', async ({ payload }) => {
@@ -251,6 +357,56 @@ resolver.define('saveSettings', async ({ payload }) => {
   await syncDisplayProperty(next);
   await kvs.set(SETTINGS_KEY, next);
   return next;
+});
+
+resolver.define('saveProviderSettings', async ({ payload }) => {
+  const current = await getProviderSettings();
+  const next = {
+    ...current,
+    emailProvider: 'sendgrid',
+    sendgridFromEmail: normalizeTextValue(payload.sendgridFromEmail),
+    sendgridFromName: normalizeTextValue(payload.sendgridFromName) || 'Service Desk',
+    sendgridReplyToEmail: normalizeTextValue(payload.sendgridReplyToEmail),
+    smsProvider: 'twilio',
+    twilioRegion: payload.twilioRegion === 'ie1' ? 'ie1' : 'global',
+    twilioFromNumber: normalizeTextValue(payload.twilioFromNumber),
+    twilioMessagingServiceSid: normalizeTextValue(payload.twilioMessagingServiceSid)
+  };
+  await kvs.set(PROVIDER_SETTINGS_KEY, next);
+  const secretInputs = {
+    sendgridApiKey: payload.sendgridApiKey,
+    twilioAccountSid: payload.twilioAccountSid,
+    twilioAuthToken: payload.twilioAuthToken,
+    twilioApiKey: payload.twilioApiKey,
+    twilioApiSecret: payload.twilioApiSecret
+  };
+  for (const [name, value] of Object.entries(secretInputs)) {
+    const clean = normalizeTextValue(value);
+    if (clean) await kvs.setSecret(PROVIDER_SECRET_KEYS[name], clean);
+  }
+  return { settings: next, status: await providerStatus() };
+});
+
+resolver.define('saveTemplates', async ({ payload }) => {
+  const current = await getTemplates();
+  const next = { ...current };
+  for (const type of ['initial','update','resolved','monthly-test']) {
+    if (!payload?.[type]) continue;
+    next[type] = {
+      ...current[type],
+      subject: String(payload[type].subject ?? current[type].subject).trim(),
+      intro: String(payload[type].intro ?? current[type].intro).trim(),
+      followup: String(payload[type].followup ?? current[type].followup).trim(),
+      sms: String(payload[type].sms ?? current[type].sms).trim()
+    };
+  }
+  await kvs.set(TEMPLATE_SETTINGS_KEY, next);
+  return next;
+});
+
+resolver.define('resetTemplates', async () => {
+  await kvs.delete(TEMPLATE_SETTINGS_KEY);
+  return await getTemplates();
 });
 
 resolver.define('saveContact', async ({ payload }) => {
@@ -415,7 +571,10 @@ function subjectSummary(a) {
   return summary.replace(new RegExp(`^${escaped}\\s*(?:[-–—:|]\\s*)`, 'i'), '').trim() || summary;
 }
 
-function buildEmailSubject(a) {
+function buildEmailSubject(a, templates = DEFAULT_TEMPLATES) {
+  const type = templateType(a.alertType);
+  const configured = templates?.[type]?.subject;
+  if (configured) return renderTemplate(configured, a);
   const summary = subjectSummary(a);
   if (a.alertType === 'monthly-test') return `TEST ONLY | MONTHLY SYSTEM ALERT TEST | ${a.clientCode} | ${a.testMonth || monthLabel()}`;
   if (a.alertType === 'resolved') return `SERVICE RESTORED | ${a.clientCode} | ${a.issueKey} | ${summary}`;
@@ -424,13 +583,51 @@ function buildEmailSubject(a) {
   return `${priorityLabel} SYSTEM ALERT | ${a.clientCode} | ${a.issueKey} | ${summary}`;
 }
 
-function buildEmailText(a) {
+function buildEmailText(a, templates = DEFAULT_TEMPLATES) {
   const p = emailPresentation(a);
-  if (a.alertType === 'monthly-test') return `${buildEmailSubject(a)}\n\nTEST ONLY — NO LIVE SERVICE INCIDENT.\n\n${p.intro}\n\n${a.issueKey ? `Reference: ${a.issueKey}\n` : ''}Customer: ${a.clientCode}\nTest month: ${a.testMonth || monthLabel()}\nStatus: ${p.status}\n\nTest details:\n${a.message}\n\nNo action is required unless acknowledgement is part of the agreed test process.`;
-  return `${buildEmailSubject(a)}\n\n${p.intro}\n\nReference: ${a.issueKey}\nCustomer: ${a.clientCode}\nPriority: ${a.priorityLabel || a.priority}\nIssue Start Time: ${a.startTime || 'Not specified'}\nNext Update Due: ${a.alertType === 'resolved' ? 'No further update planned' : (a.nextUpdate || 'To be confirmed')}\nStatus: ${p.status}\n\nCurrent situation:\n${a.message}\n\nPlease reference ${a.issueKey} in any correspondence regarding this incident.`;
+  const template = templates?.[templateType(a.alertType)] || {};
+  const intro = renderTemplate(template.intro || p.intro, a);
+  const defaultFollowup = a.alertType === 'monthly-test'
+    ? 'No action is required unless acknowledgement is part of the agreed test process.'
+    : a.alertType === 'resolved'
+      ? 'No further incident updates are planned at this time. The Service Desk will continue to monitor the service.'
+      : 'Our support team is actively managing this incident. A further update will be provided by the time shown above, or sooner if there is a significant change.';
+  const followup = renderTemplate(template.followup || defaultFollowup, a);
+  if (a.alertType === 'monthly-test') return `${buildEmailSubject(a, templates)}
+
+TEST ONLY — NO LIVE SERVICE INCIDENT.
+
+${intro}
+
+${a.issueKey ? `Reference: ${a.issueKey}
+` : ''}Customer: ${a.clientCode}
+Test month: ${a.testMonth || monthLabel()}
+Status: ${p.status}
+
+Test details:
+${a.message}
+
+${followup}`;
+  return `${buildEmailSubject(a, templates)}
+
+${intro}
+
+Reference: ${a.issueKey}
+Customer: ${a.clientCode}
+Priority: ${a.priorityLabel || a.priority}
+Issue Start Time: ${a.startTime || 'Not specified'}
+Next Update Due: ${a.alertType === 'resolved' ? 'No further update planned' : (a.nextUpdate || 'To be confirmed')}
+Status: ${p.status}
+
+Current situation:
+${a.message}
+
+${followup}
+
+Please reference ${a.issueKey} in any correspondence regarding this incident.`;
 }
 
-function buildEmailHtml(a) {
+function buildEmailHtml(a, templates = DEFAULT_TEMPLATES) {
   const p = emailPresentation(a);
   const isTest = a.alertType === 'monthly-test';
   const isResolved = a.alertType === 'resolved';
@@ -447,12 +644,17 @@ function buildEmailHtml(a) {
     return `<tr><td style="width:34%;padding:11px 14px;color:#626f86;font-size:13px;${borderStyle}">${esc(k)}</td><td style="padding:11px 14px;color:#172B4D;font-size:13px;font-weight:700;${borderStyle}">${valueHtml}</td></tr>`;
   }).join('');
   const alertBox = isTest ? `<tr><td style="padding:0 32px 22px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${p.soft};border:1px solid ${p.border};border-radius:8px"><tr><td style="padding:15px 17px;color:#533F04;font-size:14px;line-height:1.5"><strong>TEST ONLY — NO LIVE SERVICE INCIDENT</strong><br>This message is part of the scheduled monthly System Alert test.</td></tr></table></td></tr>` : '';
-  const followup = isTest ? 'No action is required unless acknowledgement is part of the agreed test process.' : isResolved ? 'No further incident updates are planned at this time. The Service Desk will continue to monitor the service.' : 'Our support team is actively managing this incident. A further update will be provided by the time shown above, or sooner if there is a significant change.';
+  const template = templates?.[templateType(a.alertType)] || {};
+  const intro = renderTemplate(template.intro || p.intro, a);
+  const defaultFollowup = isTest ? 'No action is required unless acknowledgement is part of the agreed test process.' : isResolved ? 'No further incident updates are planned at this time. The Service Desk will continue to monitor the service.' : 'Our support team is actively managing this incident. A further update will be provided by the time shown above, or sooner if there is a significant change.';
+  const followup = renderTemplate(template.followup || defaultFollowup, a);
 
-  return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="margin:0;padding:0;background:#F1F2F4;font-family:Arial,Helvetica,sans-serif;color:#172B4D"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F1F2F4"><tr><td align="center" style="padding:28px 12px"><table role="presentation" width="680" cellpadding="0" cellspacing="0" style="width:100%;max-width:680px;background:#FFFFFF;border:1px solid #DFE1E6;border-radius:12px;overflow:hidden"><tr><td style="background:#172B4D;padding:25px 32px"><div style="font-size:12px;line-height:1.2;letter-spacing:1.5px;font-weight:700;color:#B3B9C4">${esc(fromName.toUpperCase())}</div><div style="margin-top:8px;font-size:25px;line-height:1.25;font-weight:700;color:#FFFFFF">${esc(p.title)}</div></td></tr><tr><td style="padding:24px 32px 14px"><div style="display:inline-block;background:${p.accent};color:#FFFFFF;border-radius:5px;padding:9px 14px;font-size:13px;line-height:1.2;font-weight:700;letter-spacing:.3px">${esc(p.badge)}</div><div style="margin-top:18px;font-size:15px;line-height:1.6;color:#172B4D">${esc(p.intro)}</div></td></tr>${alertBox}<tr><td style="padding:4px 32px 20px"><div style="font-size:16px;font-weight:700;margin-bottom:10px">Incident details</div><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #DFE1E6;border-radius:8px;border-collapse:separate;border-spacing:0;overflow:hidden">${rows}</table></td></tr><tr><td style="padding:0 32px 28px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${p.soft};border-left:4px solid ${p.accent};border-radius:6px"><tr><td style="padding:17px 18px"><div style="font-size:16px;font-weight:700;margin-bottom:9px">${isTest?'Test details':'Current situation'}</div><div style="font-size:14px;line-height:1.65;white-space:pre-line">${esc(a.message || '')}</div></td></tr></table><div style="font-size:14px;line-height:1.6;margin-top:20px">${esc(followup)}</div></td></tr><tr><td style="background:#F7F8F9;border-top:1px solid #EBECF0;padding:19px 32px;color:#626F86;font-size:12px;line-height:1.55"><strong style="color:#44546F">${esc(fromName)}</strong><br>${isTest ? `Scheduled System Alert test · Reference ${esc(a.issueKey)}` : `Please reference ${esc(a.issueKey)} in any correspondence regarding this incident.`}</td></tr></table></td></tr></table></body></html>`;
+  return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="margin:0;padding:0;background:#F1F2F4;font-family:Arial,Helvetica,sans-serif;color:#172B4D"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F1F2F4"><tr><td align="center" style="padding:28px 12px"><table role="presentation" width="680" cellpadding="0" cellspacing="0" style="width:100%;max-width:680px;background:#FFFFFF;border:1px solid #DFE1E6;border-radius:12px;overflow:hidden"><tr><td style="background:#172B4D;padding:25px 32px"><div style="font-size:12px;line-height:1.2;letter-spacing:1.5px;font-weight:700;color:#B3B9C4">${esc(fromName.toUpperCase())}</div><div style="margin-top:8px;font-size:25px;line-height:1.25;font-weight:700;color:#FFFFFF">${esc(p.title)}</div></td></tr><tr><td style="padding:24px 32px 14px"><div style="display:inline-block;background:${p.accent};color:#FFFFFF;border-radius:5px;padding:9px 14px;font-size:13px;line-height:1.2;font-weight:700;letter-spacing:.3px">${esc(p.badge)}</div><div style="margin-top:18px;font-size:15px;line-height:1.6;color:#172B4D">${esc(intro)}</div></td></tr>${alertBox}<tr><td style="padding:4px 32px 20px"><div style="font-size:16px;font-weight:700;margin-bottom:10px">Incident details</div><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #DFE1E6;border-radius:8px;border-collapse:separate;border-spacing:0;overflow:hidden">${rows}</table></td></tr><tr><td style="padding:0 32px 28px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${p.soft};border-left:4px solid ${p.accent};border-radius:6px"><tr><td style="padding:17px 18px"><div style="font-size:16px;font-weight:700;margin-bottom:9px">${isTest?'Test details':'Current situation'}</div><div style="font-size:14px;line-height:1.65;white-space:pre-line">${esc(a.message || '')}</div></td></tr></table><div style="font-size:14px;line-height:1.6;margin-top:20px">${esc(followup)}</div></td></tr><tr><td style="background:#F7F8F9;border-top:1px solid #EBECF0;padding:19px 32px;color:#626F86;font-size:12px;line-height:1.55"><strong style="color:#44546F">${esc(fromName)}</strong><br>${isTest ? `Scheduled System Alert test · Reference ${esc(a.issueKey)}` : `Please reference ${esc(a.issueKey)} in any correspondence regarding this incident.`}</td></tr></table></td></tr></table></body></html>`;
 }
 
-function buildSmsText(a) {
+function buildSmsText(a, templates = DEFAULT_TEMPLATES) {
+  const configured = templates?.[templateType(a.alertType)]?.sms;
+  if (configured) return renderTemplate(configured, a).slice(0, 700);
   const issueText = (a.message || a.summary || '').trim();
   const start = a.startTime || 'Not specified';
   const next = a.nextUpdate || 'To be confirmed';
@@ -473,15 +675,19 @@ function buildSmsText(a) {
 }
 
 async function sendTwilio(to, body) {
-  const accountSid = process.env.TWILIO_ACCOUNT_SID;
-  const username = process.env.TWILIO_API_KEY || accountSid;
-  const password = process.env.TWILIO_API_SECRET || process.env.TWILIO_AUTH_TOKEN;
-  if (!accountSid || !username || !password) throw new Error('Twilio credentials are not configured.');
-  const region = process.env.TWILIO_REGION === 'ie1' ? 'https://api.dublin.ie1.twilio.com' : 'https://api.twilio.com';
+  const cfg = await getProviderSettings();
+  const accountSid = (await getProviderSecret('twilioAccountSid')) || process.env.TWILIO_ACCOUNT_SID;
+  const username = (await getProviderSecret('twilioApiKey')) || process.env.TWILIO_API_KEY || accountSid;
+  const password = (await getProviderSecret('twilioApiSecret')) || (await getProviderSecret('twilioAuthToken')) || process.env.TWILIO_API_SECRET || process.env.TWILIO_AUTH_TOKEN;
+  if (!accountSid || !username || !password) throw new Error('Twilio credentials are not configured. Add them in System Alert > Communication providers or Forge environment variables.');
+  const regionName = cfg.twilioRegion || process.env.TWILIO_REGION || 'global';
+  const region = regionName === 'ie1' ? 'https://api.dublin.ie1.twilio.com' : 'https://api.twilio.com';
   const params = new URLSearchParams({ To: to, Body: body });
-  if (process.env.TWILIO_MESSAGING_SERVICE_SID) params.set('MessagingServiceSid', process.env.TWILIO_MESSAGING_SERVICE_SID);
-  else if (process.env.TWILIO_FROM_NUMBER) params.set('From', process.env.TWILIO_FROM_NUMBER);
-  else throw new Error('Set TWILIO_MESSAGING_SERVICE_SID or TWILIO_FROM_NUMBER.');
+  const messagingServiceSid = cfg.twilioMessagingServiceSid || process.env.TWILIO_MESSAGING_SERVICE_SID;
+  const fromNumber = cfg.twilioFromNumber || process.env.TWILIO_FROM_NUMBER;
+  if (messagingServiceSid) params.set('MessagingServiceSid', messagingServiceSid);
+  else if (fromNumber) params.set('From', fromNumber);
+  else throw new Error('Configure a Twilio Messaging Service SID or From number.');
   const res = await fetch(`${region}/2010-04-01/Accounts/${accountSid}/Messages.json`, {
     method: 'POST',
     headers: {
@@ -496,17 +702,19 @@ async function sendTwilio(to, body) {
 }
 
 async function sendEmail(toEmails, subject, html, text, fromName, replyToEmail='') {
-  const apiKey = process.env.SENDGRID_API_KEY;
-  const fromEmail = process.env.ALERT_FROM_EMAIL;
-  if (!apiKey || !fromEmail) throw new Error('Email provider is not configured. Set SENDGRID_API_KEY and ALERT_FROM_EMAIL.');
+  const cfg = await getProviderSettings();
+  const apiKey = (await getProviderSecret('sendgridApiKey')) || process.env.SENDGRID_API_KEY;
+  const fromEmail = cfg.sendgridFromEmail || process.env.ALERT_FROM_EMAIL;
+  if (!apiKey || !fromEmail) throw new Error('Email provider is not configured. Add the SendGrid API key and sender address in System Alert > Communication providers or Forge environment variables.');
   const recipients = [...new Set((toEmails || []).map(normalizeTextValue).filter(Boolean))];
   if (!recipients.length) return true;
-  const replyTo = normalizeTextValue(replyToEmail || process.env.ALERT_REPLY_TO || fromEmail);
+  const replyTo = normalizeTextValue(cfg.sendgridReplyToEmail || replyToEmail || process.env.ALERT_REPLY_TO || fromEmail);
+  const providerFromName = normalizeTextValue(cfg.sendgridFromName || process.env.ALERT_FROM_NAME || fromName || 'Service Desk');
   const body = {
     // One personalization per recipient prevents customers from seeing one another's addresses.
     personalizations: recipients.map(email => ({ to: [{ email }] })),
-    from: { email: fromEmail, name: process.env.ALERT_FROM_NAME || fromName || 'Service Desk' },
-    reply_to: { email: replyTo, name: process.env.ALERT_REPLY_TO_NAME || fromName || 'Service Desk' },
+    from: { email: fromEmail, name: providerFromName },
+    reply_to: { email: replyTo, name: process.env.ALERT_REPLY_TO_NAME || providerFromName },
     subject,
     content: [{ type: 'text/plain', value: text }, { type: 'text/html', value: html }]
   };
@@ -542,11 +750,12 @@ resolver.define('previewEmail', async ({ payload }) => {
   const startTime = payload.startTime || (settings.issueStartFieldId ? formatDateTime(fieldText(currentIssue.fields[settings.issueStartFieldId])) : '');
   const nextUpdate = payload.nextUpdate || (settings.nextUpdateFieldId ? formatDateTime(fieldText(currentIssue.fields[settings.nextUpdateFieldId])) : '');
   const a = { ...payload, clientCode: currentClientCode, startTime, nextUpdate, priority: currentPriority, priorityLabel: currentPriorityConfig.label, priorityConfig: currentPriorityConfig, fromName: settings.fromName, testMonth: payload.testMonth || monthLabel() };
+  const templates = await getTemplates();
   const presentation = emailPresentation(a);
   return {
-    subject: buildEmailSubject(a),
-    html: buildEmailHtml(a),
-    text: buildEmailText(a),
+    subject: buildEmailSubject(a, templates),
+    html: buildEmailHtml(a, templates),
+    text: buildEmailText(a, templates),
     model: {
       issueKey: a.issueKey,
       clientCode: a.clientCode,
@@ -607,9 +816,10 @@ resolver.define('sendAlert', async ({ payload, context }) => {
   if (!eligibleContacts.length) throw new Error(isTest ? 'None of the selected contacts are enabled for Monthly Test alerts.' : `None of the selected contacts are enabled for ${payload.priority} alerts.`);
 
   const a = { ...payload, priorityLabel: currentPriorityConfig.label, priorityConfig: currentPriorityConfig, fromName: settings.fromName, testMonth: payload.testMonth || monthLabel() };
-  const subject = buildEmailSubject(a);
-  const text = buildEmailText(a);
-  const html = buildEmailHtml(a);
+  const templates = await getTemplates();
+  const subject = buildEmailSubject(a, templates);
+  const text = buildEmailText(a, templates);
+  const html = buildEmailHtml(a, templates);
 
   const emailRecipients = payload.sendEmail
     ? [...new Set(eligibleContacts.filter(c => c.email && c.emailAlerts).map(c => c.email))]
@@ -625,7 +835,7 @@ resolver.define('sendAlert', async ({ payload, context }) => {
     results.email.ok = true;
   }
 
-  const smsText = buildSmsText(a);
+  const smsText = buildSmsText(a, templates);
 
   for (const mobile of smsRecipients) {
     try { await sendTwilio(mobile, smsText); results.sms.sent++; }
@@ -728,15 +938,16 @@ export async function monthlyTestScheduler() {
         summary: 'Monthly System Alert Test', message: `This is the scheduled monthly System Alert test for ${clientCode}.`,
         startTime: '', nextUpdate: '', testMonth: label, fromName: settings.fromName
       };
-      const subject = buildEmailSubject(a);
-      const text = buildEmailText(a);
-      const html = buildEmailHtml(a);
+      const templates = await getTemplates();
+      const subject = buildEmailSubject(a, templates);
+      const text = buildEmailText(a, templates);
+      const html = buildEmailHtml(a, templates);
       let emailOk = false;
       if (emailRecipients.length) {
         await sendEmail(emailRecipients, subject, html, text, settings.fromName, settings.replyToEmail);
         emailOk = true;
       }
-      const smsText = buildSmsText(a);
+      const smsText = buildSmsText(a, templates);
       let smsSent = 0;
       const smsFailed = [];
       for (const mobile of smsRecipients) {

@@ -1,6 +1,6 @@
-System Alert Manager v3.6.1 upgrade
+System Alert Manager v3.7.1 upgrade
 
-1. Start from your committed v3.6.0 GitHub working folder.
+1. Start from your committed v3.6.1 GitHub working folder.
 2. Copy the contents of this package over the existing registered Forge app. Do NOT run forge register.
 3. Build all Custom UI resources:
 
@@ -19,10 +19,16 @@ cd C:\jiraapps\jira-system-alert-app
 npm install
 forge lint
 
-5. Commit/push to GitHub, then deploy:
+5. If lint is clean, commit/push v3.7.1 to GitHub before deployment.
+6. Deploy:
 forge deploy
 
-No new Forge scopes are added by v3.6.1, so a new major-version approval should not normally be required.
+v3.7.1 uses the same Forge scopes as the corrected v3.6.1 installation, including manage:jira-configuration. A new major-version approval should not normally be required if v3.6.1 was already upgraded with that scope.
 
-6. Open System Alert Contacts. Confirm v3.6.1, client dropdown values, provider status, contact filtering and test buttons.
-7. Edit each legacy contact once and select its Jira client so the contact stores the Jira option ID. Until migrated, legacy contacts continue to fall back to client-code matching.
+7. Open System Alert Contacts and confirm v3.7.1.
+8. Check Setup status.
+9. Existing SendGrid/Twilio Forge environment variables continue to work. You may optionally migrate them into Communication providers.
+10. Test template changes with Preview Email before sending a live incident alert.
+
+
+v3.7.1 UI change: Templates and other configuration areas are now separated by an in-app settings navigation. No new Forge scopes are introduced.

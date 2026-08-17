@@ -1,7 +1,7 @@
 import { invoke } from '@forge/bridge';
 import './styles.css';
 
-const APP_VERSION = '3.6.1';
+const APP_VERSION = '3.7.1';
 const app = document.querySelector('#app');
 
 const state = {
@@ -9,7 +9,8 @@ const state = {
   editingId: null,
   message: '',
   error: '',
-  busy: false
+  busy: false,
+  activeSection: 'general'
 };
 
 const esc = (v = '') => String(v).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -29,26 +30,45 @@ function renderLoading() {
 
 function render() {
   if (!state.data) return renderLoading();
-  const { settings = {}, contacts = [], clientOptions = [], providerStatus = {} } = state.data;
+  const { settings = {}, contacts = [], clientOptions = [], providerStatus = {}, providerSettings = {}, templates = {}, setupStatus = {} } = state.data;
   const editing = state.editingId ? contacts.find(c => c.id === state.editingId) : null;
   const c = editing || {};
+  const active = state.activeSection || 'general';
 
   app.innerHTML = `<div class="page">
     <header class="hero">
       <div>
-        <h1>System Alert Contacts</h1>
-        <p>Manage System Alert settings and client notification contacts.</p>
+        <h1>System Alert Manager</h1>
+        <p>Configure incident communications, delivery providers, templates and client contacts.</p>
       </div>
       <span class="version">v${esc(state.data.appVersion || APP_VERSION)}</span>
     </header>
 
+    <nav class="admin-nav" aria-label="System Alert settings">
+      ${navButton('general','General',active)}
+      ${navButton('contacts','Clients & Contacts',active)}
+      ${navButton('providers','Communication Providers',active)}
+      ${navButton('templates','Templates',active)}
+      ${navButton('monthly','Monthly Test',active)}
+    </nav>
+
     ${state.message ? `<div class="notice success">${esc(state.message)}</div>` : ''}
     ${state.error ? `<div class="notice error">${esc(state.error)}</div>` : ''}
 
-    <section class="card">
-      <div class="card-head">
-        <div><h2>App settings</h2><p>Choose the Jira project and priorities that can use System Alert. These Jira fields pre-fill the alert.</p></div>
+    ${active === 'general' ? `
+    <section class="card setup-overview">
+      <div class="card-head"><div><h2>Setup status</h2><p>A quick check of the items required before System Alert Manager is ready for live incidents.</p></div></div>
+      <div class="card-body setup-grid">
+        ${setupItem('Jira configuration', setupStatus.jira, 'Project, Client field and priorities')}
+        ${setupItem('Jira client list', setupStatus.clients, `${clientOptions.length} client option${clientOptions.length===1?'':'s'} loaded`)}
+        ${setupItem('Email provider', setupStatus.email, providerStatus.email?.configured ? `${providerStatus.email.provider} ready` : 'Needs configuration')}
+        ${setupItem('SMS provider', setupStatus.sms, providerStatus.sms?.configured ? `${providerStatus.sms.provider} ready` : 'Needs configuration')}
+        ${setupItem('Contacts', Number(setupStatus.contacts||0)>0, `${Number(setupStatus.contacts||0)} saved contact${Number(setupStatus.contacts||0)===1?'':'s'}`)}
       </div>
+    </section>
+
+    <section class="card">
+      <div class="card-head"><div><h2>App settings</h2><p>Choose the Jira project and priorities that can use System Alert. These Jira fields pre-fill the alert.</p></div></div>
       <form id="settingsForm" class="card-body form-grid">
         ${field('clientFieldId','Client Jira field ID', settings.clientFieldId || '', 'customfield_10115')}
         ${field('issueStartFieldId','Issue Start Time field ID', settings.issueStartFieldId || 'customfield_10786', 'customfield_10786')}
@@ -57,67 +77,116 @@ function render() {
         ${field('fromName','Sender display name', settings.fromName || 'Service Desk', 'Service Desk')}
         ${field('replyToEmail','Reply-to email', settings.replyToEmail || '', 'servicedesk@example.com','', 'email')}
         <div class="field wide"><label>System Alert priorities</label><p class="help">Add the Jira priority names that should show the System Alert button. Names must match Jira exactly. You can also set the label and colour used in notifications.</p><div id="priorityConfigRows" class="priority-config-list">${renderPriorityConfigRows(settings.priorityConfigs || [])}</div><button id="addPriority" class="btn secondary small" type="button">+ Add priority</button></div>
-        <div class="field wide"><label>Automatic monthly test</label><div class="checks inline-checks">
-          <label><input id="monthlyTestEnabled" type="checkbox" ${checked(settings.monthlyTestEnabled !== false)}> Enabled</label>
-          <label>Run from <select id="monthlyTestHour">${Array.from({length:24},(_,h)=>`<option value="${h}" ${Number(settings.monthlyTestHour ?? 10)===h?'selected':''}>${String(h).padStart(2,'0')}:00</option>`).join('')} </select> Ireland time on the first Wednesday</label>
-        </div><p class="help">Forge checks hourly. The test sends on the first hourly run at or after this time, once per client.</p></div>
         <div class="form-actions wide"><button class="btn primary" type="submit">Save settings</button></div>
       </form>
-    </section>
+    </section>` : ''}
 
+    ${active === 'providers' ? `
     <section class="card">
-      <div class="card-head"><div><h2>Communication providers</h2><p>Quick health check for the delivery services used by System Alert Manager.</p></div></div>
+      <div class="card-head"><div><h2>Communication providers</h2><p>Configure SendGrid email and Twilio SMS. Secret values are stored encrypted and are never displayed again after saving.</p></div></div>
       <div class="card-body provider-grid">
         ${providerCard('Email', providerStatus.email)}
         ${providerCard('SMS', providerStatus.sms)}
       </div>
-    </section>
+      <form id="providerForm" class="card-body provider-config-grid">
+        <div class="provider-config-block"><h3>Email · SendGrid</h3><p class="help">Existing Forge environment variables remain supported. Enter a secret only when adding or replacing it.</p>
+          ${field('sendgridFromEmail','From email', providerSettings.sendgridFromEmail || providerStatus.email?.from || '', 'servicedesk@example.com','', 'email')}
+          ${field('sendgridFromName','From name', providerSettings.sendgridFromName || settings.fromName || 'Service Desk', 'Service Desk')}
+          ${field('sendgridReplyToEmail','Reply-to email', providerSettings.sendgridReplyToEmail || settings.replyToEmail || '', 'servicedesk@example.com','', 'email')}
+          ${secretField('sendgridApiKey','SendGrid API key', providerStatus.email?.configured ? 'Configured — leave blank to keep current key' : 'SG.xxxxx')}
+        </div>
+        <div class="provider-config-block"><h3>SMS · Twilio</h3><p class="help">Use either a From number or Messaging Service SID. Existing Forge variables remain supported.</p>
+          ${secretField('twilioAccountSid','Account SID', providerStatus.sms?.configured ? 'Configured — leave blank to keep current SID' : 'ACxxxxxxxx')}
+          ${secretField('twilioAuthToken','Auth token', providerStatus.sms?.configured ? 'Configured — leave blank to keep current token' : 'Enter auth token')}
+          ${secretField('twilioApiKey','API key SID (optional)', 'SKxxxxxxxx')}
+          ${secretField('twilioApiSecret','API key secret (optional)', 'Leave blank if using Auth Token')}
+          ${field('twilioFromNumber','From number', providerSettings.twilioFromNumber || '', '+44...')}
+          ${field('twilioMessagingServiceSid','Messaging Service SID', providerSettings.twilioMessagingServiceSid || '', 'MGxxxxxxxx')}
+          <div class="field"><label for="twilioRegion">Twilio region</label><select id="twilioRegion"><option value="global" ${providerSettings.twilioRegion!=='ie1'?'selected':''}>Global</option><option value="ie1" ${providerSettings.twilioRegion==='ie1'?'selected':''}>Ireland (IE1)</option></select></div>
+        </div>
+        <div class="form-actions wide"><button class="btn primary" type="submit">Save provider configuration</button></div>
+      </form>
+    </section>` : ''}
 
+    ${active === 'templates' ? `
+    <section class="card templates-page">
+      <div class="card-head"><div><h2>Message templates</h2><p>Edit customer-facing wording without cluttering the main settings page.</p></div><button id="resetTemplates" class="btn secondary" type="button">Reset defaults</button></div>
+      <div class="card-body template-help"><strong>Available tokens:</strong> {{priority}}, {{jiraPriority}}, {{clientCode}}, {{issueKey}}, {{summary}}, {{startTime}}, {{nextUpdate}}, {{message}}, {{testMonth}}</div>
+      <form id="templateForm" class="card-body templates-grid">
+        ${renderTemplateEditor('initial','Initial alert', templates.initial)}
+        ${renderTemplateEditor('update','Incident update', templates.update)}
+        ${renderTemplateEditor('resolved','Service restored', templates.resolved)}
+        ${renderTemplateEditor('monthly-test','Monthly test', templates['monthly-test'])}
+        <div class="form-actions wide"><button class="btn primary" type="submit">Save templates</button></div>
+      </form>
+    </section>` : ''}
+
+    ${active === 'contacts' ? `
     <section class="card ${editing ? 'editing' : ''}">
-      <div class="card-head">
-        <div><h2>${editing ? 'Edit contact' : 'Add contact'}</h2><p>${editing ? 'Update the saved contact details and alert preferences.' : 'Add a contact or distribution list for a client.'}</p></div>
-        ${editing ? `<button id="cancelEditTop" class="btn secondary" type="button">Cancel edit</button>` : ''}
-      </div>
+      <div class="card-head"><div><h2>${editing ? 'Edit contact' : 'Add contact'}</h2><p>${editing ? 'Update the saved contact details and alert preferences.' : 'Add a contact or distribution list for a client.'}</p></div>${editing ? `<button id="cancelEditTop" class="btn secondary" type="button">Cancel edit</button>` : ''}</div>
       <form id="contactForm" class="card-body form-grid">
-        <div class="field wide"><label for="clientOptionId">Client</label><select id="clientOptionId" name="clientOptionId" required>
-          <option value="">Select a client from the Jira Client field…</option>
-          ${clientOptions.map(o => `<option value="${esc(o.optionId)}" ${String(c.clientOptionId||'')===String(o.optionId)?'selected':''}>${esc(o.value)}</option>`).join('')}
-        </select><p class="help">Loaded directly from ${esc(settings.clientFieldId || 'the configured Jira Client field')}. Client code/name are no longer typed manually.</p></div>
+        <div class="field wide"><label for="clientOptionId">Client</label><select id="clientOptionId" name="clientOptionId" required><option value="">Select a client from the Jira Client field…</option>${clientOptions.map(o => `<option value="${esc(o.optionId)}" ${String(c.clientOptionId||'')===String(o.optionId)?'selected':''}>${esc(o.value)}</option>`).join('')}</select><p class="help">Loaded directly from ${esc(settings.clientFieldId || 'the configured Jira Client field')}.</p></div>
         ${field('name','Contact / distribution list name', c.name || '', 'Operations Team','wide')}
         ${field('email','Email address', c.email || '', 'name@example.com','', 'email')}
         ${field('mobile','Mobile number', c.mobile || '', '+353...')}
-        <div class="field wide"><label>Live incident priorities</label><div class="priority-options">
-          ${renderContactPriorityOptions(c.priorities || [], settings.priorityConfigs || [])}
-        </div><p class="help">Only priorities enabled above can be assigned to contacts.</p></div>
-        <div class="checks wide">
-          <label><input id="emailAlerts" type="checkbox" ${checked(c.emailAlerts === true)}> Receive email alerts</label>
-          <label><input id="smsAlerts" type="checkbox" ${checked(c.smsAlerts === true)}> Receive SMS alerts</label>
-          <label><input id="monthlyTestAlerts" type="checkbox" ${checked(c.monthlyTestAlerts === true)}> Receive Monthly System Alert Test</label>
-        </div>
-        <div class="form-actions wide">
-          ${editing ? `<button id="cancelEdit" class="btn secondary" type="button">Cancel</button>` : ''}
-          <button class="btn primary" type="submit">${editing ? 'Save changes' : 'Add contact'}</button>
-        </div>
+        <div class="field wide"><label>Live incident priorities</label><div class="priority-options">${renderContactPriorityOptions(c.priorities || [], settings.priorityConfigs || [])}</div><p class="help">Only priorities enabled in General settings can be assigned to contacts.</p></div>
+        <div class="checks wide"><label><input id="emailAlerts" type="checkbox" ${checked(c.emailAlerts === true)}> Receive email alerts</label><label><input id="smsAlerts" type="checkbox" ${checked(c.smsAlerts === true)}> Receive SMS alerts</label><label><input id="monthlyTestAlerts" type="checkbox" ${checked(c.monthlyTestAlerts === true)}> Receive Monthly System Alert Test</label></div>
+        <div class="form-actions wide">${editing ? `<button id="cancelEdit" class="btn secondary" type="button">Cancel</button>` : ''}<button class="btn primary" type="submit">${editing ? 'Save changes' : 'Add contact'}</button></div>
       </form>
     </section>
+    <section class="card"><div class="card-head"><div><h2>Current contacts</h2><p>${contacts.length} saved contact${contacts.length === 1 ? '' : 's'}, grouped by client.</p></div><input id="contactFilter" class="contact-filter" placeholder="Filter contacts or clients…"></div><div id="contactsHost" class="contacts">${renderGroupedContacts(contacts)}</div></section>` : ''}
 
+    ${active === 'monthly' ? `
     <section class="card">
-      <div class="card-head"><div><h2>Automatic monthly test</h2><p>First Wednesday of each month. Recipient lists remain isolated by client code.</p></div></div>
-      <div class="card-body">${renderAutoTestStatus(state.data.autoTestStatus)}</div>
+      <div class="card-head"><div><h2>Automatic monthly test</h2><p>Schedule and review the first-Wednesday System Alert test.</p></div></div>
+      <form id="monthlyForm" class="card-body form-grid">
+        <div class="field wide"><label>Automatic monthly test</label><div class="checks inline-checks"><label><input id="monthlyTestEnabled" type="checkbox" ${checked(settings.monthlyTestEnabled !== false)}> Enabled</label><label>Run from <select id="monthlyTestHour">${Array.from({length:24},(_,h)=>`<option value="${h}" ${Number(settings.monthlyTestHour ?? 10)===h?'selected':''}>${String(h).padStart(2,'0')}:00</option>`).join('')}</select> Ireland time on the first Wednesday</label></div><p class="help">Forge checks hourly. The test sends on the first hourly run at or after this time, once per client.</p></div>
+        <div class="form-actions wide"><button class="btn primary" type="submit">Save monthly test settings</button></div>
+      </form>
     </section>
-
-    <section class="card">
-      <div class="card-head"><div><h2>Current contacts</h2><p>${contacts.length} saved contact${contacts.length === 1 ? '' : 's'}, grouped by client.</p></div><input id="contactFilter" class="contact-filter" placeholder="Filter contacts or clients…"></div>
-      <div id="contactsHost" class="contacts">${renderGroupedContacts(contacts)}</div>
-    </section>
+    <section class="card"><div class="card-head"><div><h2>Monthly test history</h2><p>Recipient lists remain isolated by client code.</p></div></div><div class="card-body">${renderAutoTestStatus(state.data.autoTestStatus)}</div></section>` : ''}
   </div>`;
 
   bindEvents();
 }
 
+function navButton(key, label, active) {
+  return `<button type="button" class="admin-nav-item ${active===key?'active':''}" data-section="${key}">${esc(label)}</button>`;
+}
+
+function setupItem(label, ok, detail='') {
+  return `<div class="setup-item ${ok?'ok':'bad'}"><span class="setup-icon">${ok?'✓':'!'}</span><div><strong>${esc(label)}</strong><p>${esc(detail)}</p></div></div>`;
+}
+
+function secretField(id, label, placeholder='') {
+  return `<div class="field"><label for="${id}">${esc(label)}</label><input id="${id}" type="password" value="" placeholder="${esc(placeholder)}" autocomplete="new-password"><p class="help">Saved as an encrypted secret. Current value is never returned to this page.</p></div>`;
+}
+
+function renderTemplateEditor(key, label, template = {}) {
+  return `<fieldset class="template-card" data-template="${esc(key)}"><legend>${esc(label)}</legend>
+    <div class="field wide"><label>Subject</label><input class="template-subject" value="${esc(template.subject || '')}"></div>
+    <div class="field wide"><label>Email introduction</label><textarea class="template-intro" rows="3">${esc(template.intro || '')}</textarea></div>
+    <div class="field wide"><label>Email follow-up</label><textarea class="template-followup" rows="3">${esc(template.followup || '')}</textarea></div>
+    <div class="field wide"><label>SMS template</label><textarea class="template-sms" rows="9">${esc(template.sms || '')}</textarea><p class="help">SMS is capped at 700 characters after token replacement.</p></div>
+  </fieldset>`;
+}
+
+function collectTemplates() {
+  const out = {};
+  document.querySelectorAll('[data-template]').forEach(card => {
+    out[card.dataset.template] = {
+      subject: card.querySelector('.template-subject')?.value || '',
+      intro: card.querySelector('.template-intro')?.value || '',
+      followup: card.querySelector('.template-followup')?.value || '',
+      sms: card.querySelector('.template-sms')?.value || ''
+    };
+  });
+  return out;
+}
+
 function providerCard(label, status = {}) {
   const ok = status.configured === true;
-  return `<div class="provider-card ${ok?'ok':'bad'}"><div><strong>${esc(label)} · ${esc(status.provider || '')}</strong><p>${ok ? 'Configured and available' : 'Not fully configured'}</p>${status.from ? `<small>From: ${esc(status.from)}</small>` : ''}</div><span class="provider-pill">${ok?'✓ Ready':'Needs setup'}</span></div>`;
+  return `<div class="provider-card ${ok?'ok':'bad'}"><div><strong>${esc(label)} · ${esc(status.provider || '')}</strong><p>${ok ? 'Configured and available' : 'Not fully configured'}</p>${status.from ? `<small>From: ${esc(status.from)}</small>` : ''}${status.sender ? `<small>Sender: ${esc(status.sender)}</small>` : ''}${status.source ? `<small>Source: ${esc(status.source)}</small>` : ''}</div><span class="provider-pill">${ok?'✓ Ready':'Needs setup'}</span></div>`;
 }
 function renderGroupedContacts(contacts = [], filter='') {
   const q = String(filter||'').toLowerCase();
@@ -203,10 +272,14 @@ function bindPriorityRowButtons() {
   });
 }
 
+function settingsValue(id, fallback) { const el=byId(id); return el ? el.checked : fallback; }
+
 function getValue(id) { return byId(id)?.value?.trim() || ''; }
 
 function bindEvents() {
-  byId('settingsForm').onsubmit = async e => {
+  document.querySelectorAll('[data-section]').forEach(btn => btn.onclick = () => { state.activeSection = btn.dataset.section; state.editingId = null; state.message=''; state.error=''; render(); window.scrollTo({top:0,behavior:'smooth'}); });
+
+  if (byId('settingsForm')) byId('settingsForm').onsubmit = async e => {
     e.preventDefault();
     await act(async () => {
       await invoke('saveSettings', {
@@ -217,15 +290,15 @@ function bindEvents() {
         fromName: getValue('fromName'),
         replyToEmail: getValue('replyToEmail'),
         priorityConfigs: collectPriorityConfigs(),
-        monthlyTestEnabled: byId('monthlyTestEnabled').checked,
-        monthlyTestHour: Number(byId('monthlyTestHour').value)
+        monthlyTestEnabled: settingsValue('monthlyTestEnabled', state.data.settings.monthlyTestEnabled !== false),
+        monthlyTestHour: Number(state.data.settings.monthlyTestHour ?? 10)
       });
       state.message = 'Settings saved.';
       await load();
     });
   };
 
-  byId('addPriority').onclick = () => {
+  if (byId('addPriority')) byId('addPriority').onclick = () => {
     const host = byId('priorityConfigRows');
     const wrapper = document.createElement('div');
     wrapper.innerHTML = renderPriorityConfigRows([{ name:'', label:'', color:'#0C66E4' }]);
@@ -235,7 +308,66 @@ function bindEvents() {
   };
   bindPriorityRowButtons();
 
-  byId('contactForm').onsubmit = async e => {
+  if (byId('providerForm')) byId('providerForm').onsubmit = async e => {
+    e.preventDefault();
+    await act(async () => {
+      await invoke('saveProviderSettings', {
+        sendgridFromEmail: getValue('sendgridFromEmail'),
+        sendgridFromName: getValue('sendgridFromName'),
+        sendgridReplyToEmail: getValue('sendgridReplyToEmail'),
+        sendgridApiKey: getValue('sendgridApiKey'),
+        twilioAccountSid: getValue('twilioAccountSid'),
+        twilioAuthToken: getValue('twilioAuthToken'),
+        twilioApiKey: getValue('twilioApiKey'),
+        twilioApiSecret: getValue('twilioApiSecret'),
+        twilioFromNumber: getValue('twilioFromNumber'),
+        twilioMessagingServiceSid: getValue('twilioMessagingServiceSid'),
+        twilioRegion: byId('twilioRegion')?.value || 'global'
+      });
+      state.message = 'Communication provider configuration saved.';
+      await load();
+    });
+  };
+
+  if (byId('templateForm')) byId('templateForm').onsubmit = async e => {
+    e.preventDefault();
+    await act(async () => {
+      await invoke('saveTemplates', collectTemplates());
+      state.message = 'Message templates saved.';
+      await load();
+    });
+  };
+
+  if (byId('resetTemplates')) byId('resetTemplates').onclick = async () => {
+    if (!confirm('Reset all email and SMS wording to the System Alert default templates?')) return;
+    await act(async () => {
+      await invoke('resetTemplates');
+      state.message = 'Message templates reset to defaults.';
+      await load();
+    });
+  };
+
+  if (byId('monthlyForm')) byId('monthlyForm').onsubmit = async e => {
+    e.preventDefault();
+    await act(async () => {
+      const current = state.data.settings || {};
+      await invoke('saveSettings', {
+        clientFieldId: current.clientFieldId || '',
+        issueStartFieldId: current.issueStartFieldId || 'customfield_10786',
+        nextUpdateFieldId: current.nextUpdateFieldId || 'customfield_10788',
+        allowedProjectKey: current.allowedProjectKey || 'SD',
+        fromName: current.fromName || 'Service Desk',
+        replyToEmail: current.replyToEmail || '',
+        priorityConfigs: current.priorityConfigs || [],
+        monthlyTestEnabled: byId('monthlyTestEnabled').checked,
+        monthlyTestHour: Number(byId('monthlyTestHour').value)
+      });
+      state.message = 'Monthly test settings saved.';
+      await load();
+    });
+  };
+
+  if (byId('contactForm')) byId('contactForm').onsubmit = async e => {
     e.preventDefault();
     const editing = state.editingId;
     await act(async () => {

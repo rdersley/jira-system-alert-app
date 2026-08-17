@@ -13,13 +13,13 @@ modules:
       displayConditions:
         jiraExpression: "(app.properties['system-alert-display'] == null && project.key == 'SD' && ['P1','P2'].includes(issue.priority.name)) || (app.properties['system-alert-display'] != null && project.key == app.properties['system-alert-display'].projectKey && app.properties['system-alert-display'].priorities.includes(issue.priority.name))"
   jira:issuePanel:
-  - key: system-alert-panel
-    resource: panel-ui-custom
-    resolver:
-      function: resolver
-    title: System Alert
-    icon: "https://developer.atlassian.com/platform/forge/images/icons/issue-panel-icon.svg"
-    displayConditions:
+    - key: system-alert-panel
+      resource: panel-ui-custom
+      resolver:
+        function: resolver
+      title: System Alert
+      icon: "https://developer.atlassian.com/platform/forge/images/icons/issue-panel-icon.svg"
+      displayConditions:
         jiraExpression: "(app.properties['system-alert-display'] == null && project.key == 'SD' && ['P1','P2'].includes(issue.priority.name)) || (app.properties['system-alert-display'] != null && project.key == app.properties['system-alert-display'].projectKey && app.properties['system-alert-display'].priorities.includes(issue.priority.name))"
   jira:adminPage:
     - key: system-alert-admin
@@ -27,7 +27,7 @@ modules:
       resolver:
         function: resolver
       layout: native
-      title: System Alert Contacts
+      title: System Alert Manager
   function:
     - key: resolver
       handler: index.handler
