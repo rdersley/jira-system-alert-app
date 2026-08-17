@@ -1,7 +1,7 @@
 import { invoke, view } from '@forge/bridge';
 import './styles.css';
 
-const APP_VERSION = '3.7.8';
+const APP_VERSION = '3.7.9';
 const app = document.querySelector('#app');
 
 const state = {
@@ -192,7 +192,8 @@ function renderEmailPreview(model) {
   const footerBg = b.footerBackground || '#F7F8F9';
   const brandAccent = b.accentColor || '#0C66E4';
   const fromName = model.fromName || b.serviceName || 'Service Desk';
-  const logo = model.logoUrl ? `<img class="brand-logo" src="${esc(model.logoUrl)}" alt="" style="display:block;max-height:44px;max-width:190px;margin:0 0 13px;border:0">` : '';
+  const previewLogoSrc = model.logoSrc || model.logoUrl || '';
+  const logo = previewLogoSrc ? `<img class="brand-logo" src="${esc(previewLogoSrc)}" alt="" style="display:block;max-height:44px;max-width:190px;margin:0 0 13px;border:0">` : '';
   const support = model.supportUrl ? `<div style="margin-top:6px"><a href="${esc(model.supportUrl)}" target="_blank" rel="noreferrer" style="color:${esc(brandAccent)};text-decoration:none">${esc(model.supportLabel || model.supportUrl)}</a></div>` : '';
   return `<table class="email-preview-bg" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${esc(pageBg)}"><tr><td><div class="email-canvas">
     <div class="email-card">

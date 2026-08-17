@@ -1,7 +1,7 @@
 import { invoke } from '@forge/bridge';
 import './styles.css';
 
-const APP_VERSION = '3.7.8';
+const APP_VERSION = '3.7.9';
 const app = document.querySelector('#app');
 
 const state = {
@@ -12,7 +12,9 @@ const state = {
   busy: false,
   activeSection: 'general',
   activeTemplate: 'branding',
-  preview: null
+  preview: null,
+  pendingLogoDataUri: null,
+  pendingLogoFileName: null
 };
 
 const esc = (v = '') => String(v).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -32,7 +34,7 @@ function renderLoading() {
 
 function render() {
   if (!state.data) return renderLoading();
-  const { settings = {}, contacts = [], clientOptions = [], providerStatus = {}, providerSettings = {}, templates = {}, branding = {}, setupStatus = {} } = state.data;
+  const { settings = {}, contacts = [], clientOptions = [], jiraFields = [], providerStatus = {}, providerSettings = {}, templates = {}, branding = {}, setupStatus = {} } = state.data;
   const editing = state.editingId ? contacts.find(c => c.id === state.editingId) : null;
   const c = editing || {};
   const active = state.activeSection || 'general';
@@ -72,9 +74,9 @@ function render() {
     <section class="card">
       <div class="card-head"><div><h2>App settings</h2><p>Choose the Jira project and priorities that can use System Alert. These Jira fields pre-fill the alert.</p></div></div>
       <form id="settingsForm" class="card-body form-grid">
-        ${field('clientFieldId','Client Jira field ID', settings.clientFieldId || '', 'customfield_10115')}
-        ${field('issueStartFieldId','Issue Start Time field ID', settings.issueStartFieldId || 'customfield_10786', 'customfield_10786')}
-        ${field('nextUpdateFieldId','Next Update Due field ID', settings.nextUpdateFieldId || 'customfield_10788', 'customfield_10788')}
+        ${jiraFieldSelect('clientFieldId','Client Jira field', settings.clientFieldId || '', jiraFields, 'Select the Jira field that identifies the client.')}
+        ${jiraFieldSelect('issueStartFieldId','Issue Start Time field', settings.issueStartFieldId || '', jiraFields, 'Select the date/time field used for the incident start.', true)}
+        ${jiraFieldSelect('nextUpdateFieldId','Next Update Due field', settings.nextUpdateFieldId || '', jiraFields, 'Select the date/time field used for the next customer update.', true)}
         ${field('allowedProjectKey','Allowed project', settings.allowedProjectKey || 'SD', 'SD')}
         ${field('fromName','Sender display name', settings.fromName || 'Service Desk', 'Service Desk')}
         ${field('replyToEmail','Reply-to email', settings.replyToEmail || '', 'servicedesk@example.com','', 'email')}
@@ -166,7 +168,7 @@ function renderBrandingEditor(b = {}) {
     <div class="branding-form">
       <div class="section-title"><h3>Email branding</h3><p>These settings are shared by every email template. Priority badges keep their configured incident colours.</p></div>
       ${field('brandServiceName','Service / company name', b.serviceName || state.data.settings?.fromName || 'Service Desk', 'Service Desk')}
-      <div class="field wide brand-logo-upload"><label for="brandLogoFile">Logo</label><div class="logo-upload-row">${b.logoDataUrl ? `<div class="logo-current"><img src="${esc(b.logoDataUrl)}" alt="Current logo"><span>${esc(b.logoFileName || 'Uploaded logo')}</span></div>` : '<div class="logo-empty">No uploaded logo</div>'}<div class="logo-upload-actions"><input id="brandLogoFile" type="file" accept="image/png,image/jpeg"><button id="removeBrandLogo" class="btn secondary" type="button" ${b.logoUploaded?'':'disabled'}>Remove uploaded logo</button></div></div><p class="help">PNG or JPG, maximum 140 KB. Uploaded logos are stored with this Jira app installation and embedded into outgoing SendGrid emails.</p></div>
+      <div class="field wide"><label>Logo</label><div class="logo-upload-row">${(b.logoDataUri || b.logoUrl) ? `<img class="brand-logo logo-settings-preview" src="${esc(b.logoDataUri || b.logoUrl)}" alt="Current logo">` : '<span class="logo-empty">No logo uploaded</span>'}<input id="brandLogoFile" type="file" accept="image/png,image/jpeg"><button id="removeLogo" class="btn secondary" type="button">Remove logo</button></div><p class="help">PNG or JPG, maximum 140 KB. Uploaded logo is used first in previews and outgoing email.</p></div>
       ${field('brandLogoUrl','Fallback logo URL (optional)', b.logoUrl || '', 'https://example.com/logo.png','wide','url')}
       <div class="colour-grid">
         ${colorField('brandHeaderBackground','Header background',b.headerBackground || '#172B4D')}
@@ -201,20 +203,8 @@ function renderSingleTemplatePage(key, template = {}) {
 function colorField(id,label,value){return `<div class="field color-control"><label for="${id}">${esc(label)}</label><div class="color-input"><input id="${id}" type="color" value="${esc(value)}"><span>${esc(value)}</span></div></div>`;}
 
 function collectBranding(){return {
-  serviceName:getValue('brandServiceName'), logoUrl:getValue('brandLogoUrl'), headerBackground:byId('brandHeaderBackground')?.value || '#172B4D', headerText:byId('brandHeaderText')?.value || '#FFFFFF', accentColor:byId('brandAccentColor')?.value || '#0C66E4', pageBackground:byId('brandPageBackground')?.value || '#F1F2F4', footerBackground:byId('brandFooterBackground')?.value || '#F7F8F9', footerText:byId('brandFooterText')?.value || '', supportLabel:getValue('brandSupportLabel'), supportUrl:getValue('brandSupportUrl')
+  serviceName:getValue('brandServiceName'), logoUrl:getValue('brandLogoUrl'), logoDataUri: state.pendingLogoDataUri !== null ? state.pendingLogoDataUri : (state.data?.branding?.logoDataUri || ''), logoFileName: state.pendingLogoFileName !== null ? state.pendingLogoFileName : (state.data?.branding?.logoFileName || ''), headerBackground:byId('brandHeaderBackground')?.value || '#172B4D', headerText:byId('brandHeaderText')?.value || '#FFFFFF', accentColor:byId('brandAccentColor')?.value || '#0C66E4', pageBackground:byId('brandPageBackground')?.value || '#F1F2F4', footerBackground:byId('brandFooterBackground')?.value || '#F7F8F9', footerText:byId('brandFooterText')?.value || '', supportLabel:getValue('brandSupportLabel'), supportUrl:getValue('brandSupportUrl')
 };}
-
-function readLogoFile(file) {
-  return new Promise((resolve,reject) => {
-    if (!file) return reject(new Error('Choose a PNG or JPG logo first.'));
-    if (!['image/png','image/jpeg'].includes(file.type)) return reject(new Error('Logo must be a PNG or JPG image.'));
-    if (file.size > 140 * 1024) return reject(new Error('Logo is too large. Please choose a PNG/JPG smaller than 140 KB.'));
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error('The logo image could not be read.'));
-    reader.onload = () => { const value=String(reader.result||''); const comma=value.indexOf(','); if(comma<0) return reject(new Error('The logo image could not be read.')); resolve({fileName:file.name,contentType:file.type,data:value.slice(comma+1)}); };
-    reader.readAsDataURL(file);
-  });
-}
 
 function collectCurrentTemplate(){return {subject:byId('templateSubject')?.value || '',intro:byId('templateIntro')?.value || '',followup:byId('templateFollowup')?.value || '',sms:byId('templateSms')?.value || ''};}
 
@@ -241,7 +231,8 @@ function renderBrandedEmailPreview(model) {
   const soft = p.soft || '#FFECEB';
   const brandAccent = b.accentColor || '#0C66E4';
   const fromName = model.fromName || b.serviceName || 'Service Desk';
-  const logo = model.logoUrl ? `<img class="brand-logo" src="${esc(model.logoUrl)}" alt="" style="display:block;max-height:44px;max-width:190px;margin-bottom:13px;border:0">` : '';
+  const previewLogoSrc = model.logoSrc || model.logoUrl || '';
+  const logo = previewLogoSrc ? `<img class="brand-logo" src="${esc(previewLogoSrc)}" alt="" style="display:block;max-height:44px;max-width:190px;margin-bottom:13px;border:0">` : '';
   const support = model.supportUrl ? `<div style="margin-top:6px"><a href="${esc(model.supportUrl)}" target="_blank" rel="noreferrer" style="color:${esc(brandAccent)};text-decoration:none">${esc(model.supportLabel || model.supportUrl)}</a></div>` : '';
   return `<table class="admin-preview-bg" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${esc(pageBg)}"><tr><td><div class="admin-preview-card">
     <table width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${esc(headerBg)}"><tr><td class="admin-preview-header">${logo}<div style="font-size:11px;letter-spacing:1.4px;font-weight:700;opacity:.8"><font color="${esc(headerText)}">${esc(fromName.toUpperCase())}</font></div><div style="margin-top:8px;font-size:24px;font-weight:700;line-height:1.25"><font color="${esc(headerText)}">${esc(p.title || model.summary || 'System Alert')}</font></div></td></tr></table>
@@ -343,6 +334,18 @@ function renderAutoTestStatus(status = {}) {
   }).join('')}</div>`;
 }
 
+function jiraFieldSelect(id, label, value, fields, help='', dateOnly=false) {
+  let list = Array.isArray(fields) ? fields : [];
+  if (dateOnly) list = list.filter(f => ['date','datetime'].includes(String(f.schemaType || '').toLowerCase()));
+  const selectedExists = list.some(f => f.id === value);
+  const options = [
+    '<option value="">Select a Jira field…</option>',
+    ...(!selectedExists && value ? [`<option value="${esc(value)}" selected>${esc(value)} (currently configured)</option>`] : []),
+    ...list.map(f => `<option value="${esc(f.id)}" ${f.id===value?'selected':''}>${esc(f.name)}${f.custom ? ' — Custom field' : ''}</option>`)
+  ].join('');
+  return `<div class="field"><label for="${id}">${esc(label)}</label><select id="${id}" name="${id}">${options}</select>${help ? `<p class="help">${esc(help)}</p>` : ''}</div>`;
+}
+
 function field(id, label, value, placeholder='', extra='', type='text') {
   return `<div class="field ${extra}"><label for="${id}">${esc(label)}</label><input id="${id}" name="${id}" type="${type}" value="${esc(value)}" placeholder="${esc(placeholder)}"></div>`;
 }
@@ -387,6 +390,17 @@ function bindEvents() {
     img.addEventListener('error', hide, { once: true });
     if (img.complete && !img.naturalWidth) hide();
   });
+  if (byId('brandLogoFile')) byId('brandLogoFile').onchange = e => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!['image/png','image/jpeg'].includes(file.type)) { state.error='Logo must be a PNG or JPG.'; return render(); }
+    if (file.size > 140 * 1024) { state.error='Logo must be 140 KB or smaller.'; return render(); }
+    const reader = new FileReader();
+    reader.onload = () => { state.pendingLogoDataUri = String(reader.result || ''); state.pendingLogoFileName = file.name; state.error=''; render(); };
+    reader.onerror = () => { state.error='Could not read the selected logo file.'; render(); };
+    reader.readAsDataURL(file);
+  };
+  if (byId('removeLogo')) byId('removeLogo').onclick = () => { state.pendingLogoDataUri=''; state.pendingLogoFileName=''; render(); };
   document.querySelectorAll('[data-section]').forEach(btn => btn.onclick = () => { state.activeSection = btn.dataset.section; state.editingId = null; state.message=''; state.error=''; render(); window.scrollTo({top:0,behavior:'smooth'}); });
 
   document.querySelectorAll('[data-template-section]').forEach(btn => btn.onclick = () => { state.activeTemplate = btn.dataset.templateSection; state.preview=null; state.message=''; state.error=''; render(); });
@@ -444,20 +458,11 @@ function bindEvents() {
 
   if (byId('brandingForm')) byId('brandingForm').onsubmit = async e => {
     e.preventDefault();
-    await act(async () => { await invoke('saveBranding', collectBranding()); state.message='Branding saved.'; await load(); });
-  };
-  if (byId('brandLogoFile')) byId('brandLogoFile').onchange = async e => {
-    const file=e.target.files?.[0]; if(!file) return;
-    try { const payload=await readLogoFile(file); await act(async()=>{ await invoke('saveBrandLogo',payload); state.message='Logo uploaded.'; await load(); }); }
-    catch(err){ state.error=err?.message || String(err); render(); }
-  };
-  if (byId('removeBrandLogo')) byId('removeBrandLogo').onclick = async () => {
-    if(!confirm('Remove the uploaded email logo?')) return;
-    await act(async()=>{ await invoke('deleteBrandLogo'); state.message='Uploaded logo removed.'; await load(); });
+    await act(async () => { await invoke('saveBranding', collectBranding()); state.pendingLogoDataUri=null; state.pendingLogoFileName=null; state.message='Branding saved.'; await load(); });
   };
   if (byId('resetBranding')) byId('resetBranding').onclick = async () => {
     if (!confirm('Reset email branding to the System Alert defaults?')) return;
-    await act(async () => { await invoke('resetBranding'); state.message='Branding reset to defaults.'; await load(); });
+    await act(async () => { await invoke('resetBranding'); state.pendingLogoDataUri=null; state.pendingLogoFileName=null; state.message='Branding reset to defaults.'; await load(); });
   };
   const previewDraft = async (kind, key, template, branding) => {
     await act(async () => { const result=await invoke('previewTemplate',{templateType:key,template,branding}); state.preview={kind,...result}; render(); });

@@ -1,4 +1,4 @@
-System Alert Manager v3.7.8 upgrade
+System Alert Manager v3.7.7 upgrade
 
 1. Extract this package over your existing GitHub-controlled app folder:
    C:\jiraapps\jira-system-alert-app
@@ -23,15 +23,13 @@ System Alert Manager v3.7.8 upgrade
    npm install
    forge lint
 
-6. If lint is clean, commit/push v3.7.8 to GitHub before deployment.
+6. If lint is clean, commit/push v3.7.7 to GitHub before deployment.
 
 7. Deploy:
    forge deploy
    forge install --upgrade
    forge install list
 
-No new Forge scopes are introduced by v3.7.8, so another major-version permission approval should not normally be required.
+No new Forge scopes are introduced by v3.7.7, so another major-version permission approval should not normally be required.
 
 After deployment open System Alert Manager > Templates. Confirm the Branding, Initial Alert, Incident Update, Service Restored and Monthly Test sub-menu items load, then test Preview Email and Preview SMS before changing live wording.
-
-Logo upload: Branding > Logo accepts PNG/JPG files up to 140 KB. No new Forge scopes are required.

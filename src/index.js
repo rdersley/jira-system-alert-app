@@ -10,8 +10,7 @@ const DISPLAY_PROPERTY_KEY = 'system-alert-display';
 const PROVIDER_SETTINGS_KEY = 'system-alert:providers';
 const TEMPLATE_SETTINGS_KEY = 'system-alert:templates';
 const BRANDING_SETTINGS_KEY = 'system-alert:branding';
-const BRAND_LOGO_KEY = 'system-alert:brand-logo';
-const BRAND_LOGO_MAX_BYTES = 140 * 1024;
+const MAX_LOGO_DATA_LENGTH = 200000;
 const PROVIDER_SECRET_KEYS = {
   sendgridApiKey: 'system-alert:provider:sendgrid-api-key',
   twilioAccountSid: 'system-alert:provider:twilio-account-sid',
@@ -19,7 +18,7 @@ const PROVIDER_SECRET_KEYS = {
   twilioApiKey: 'system-alert:provider:twilio-api-key',
   twilioApiSecret: 'system-alert:provider:twilio-api-secret'
 };
-const APP_VERSION = '3.7.8';
+const APP_VERSION = '3.7.9';
 
 const DEFAULT_SETTINGS = {
   clientFieldId: '',
@@ -53,6 +52,8 @@ const DEFAULT_PROVIDER_SETTINGS = {
 const DEFAULT_BRANDING = {
   serviceName: 'Service Desk',
   logoUrl: '',
+  logoDataUri: '',
+  logoFileName: '',
   headerBackground: '#172B4D',
   headerText: '#FFFFFF',
   accentColor: '#0C66E4',
@@ -145,16 +146,8 @@ async function getTemplates() {
   return out;
 }
 
-async function getBrandLogo() {
-  return (await kvs.get(BRAND_LOGO_KEY)) || null;
-}
-function logoDataUrl(logo) {
-  return logo?.data && logo?.contentType ? `data:${logo.contentType};base64,${logo.data}` : '';
-}
 async function getBranding() {
-  const branding = { ...DEFAULT_BRANDING, ...((await kvs.get(BRANDING_SETTINGS_KEY)) || {}) };
-  const logo = await getBrandLogo();
-  return { ...branding, logoUploaded:Boolean(logo?.data), logoFileName:logo?.fileName || '', logoContentType:logo?.contentType || '', logoDataUrl:logoDataUrl(logo) };
+  return { ...DEFAULT_BRANDING, ...((await kvs.get(BRANDING_SETTINGS_KEY)) || {}) };
 }
 
 function normalizeHexColor(value, fallback) {
@@ -162,10 +155,35 @@ function normalizeHexColor(value, fallback) {
   return /^#[0-9A-F]{6}$/i.test(v) ? v.toUpperCase() : fallback;
 }
 
+
+function normalizeLogoDataUri(value='') {
+  const v = String(value || '').trim();
+  if (!v) return '';
+  if (v.length > MAX_LOGO_DATA_LENGTH) throw new Error('Uploaded logo is too large. Please use a PNG or JPG under 140 KB.');
+  if (!/^data:image\/(png|jpeg);base64,[A-Za-z0-9+/=]+$/i.test(v)) throw new Error('Uploaded logo must be a PNG or JPG image.');
+  return v;
+}
+
+function logoAttachmentFromBranding(branding = {}) {
+  const dataUri = branding?.logoDataUri || '';
+  const match = /^data:image\/(png|jpeg);base64,(.+)$/i.exec(dataUri);
+  if (!match) return null;
+  const ext = match[1].toLowerCase() === 'jpeg' ? 'jpg' : 'png';
+  return {
+    content: match[2],
+    type: `image/${match[1].toLowerCase()}`,
+    filename: branding.logoFileName || `system-alert-logo.${ext}`,
+    disposition: 'inline',
+    content_id: 'system-alert-logo'
+  };
+}
+
 function normalizeBranding(value = {}) {
   return {
     serviceName: normalizeTextValue(value.serviceName || DEFAULT_BRANDING.serviceName).slice(0, 80),
     logoUrl: normalizeTextValue(value.logoUrl).slice(0, 500),
+    logoDataUri: normalizeLogoDataUri(value.logoDataUri),
+    logoFileName: normalizeTextValue(value.logoFileName).slice(0, 120),
     headerBackground: normalizeHexColor(value.headerBackground, DEFAULT_BRANDING.headerBackground),
     headerText: normalizeHexColor(value.headerText, DEFAULT_BRANDING.headerText),
     accentColor: normalizeHexColor(value.accentColor, DEFAULT_BRANDING.accentColor),
@@ -280,6 +298,19 @@ function clientIdentity(raw) {
   const name = value.includes(' - ') ? value.split(' - ').slice(1).join(' - ').trim() : value;
   return { optionId, value, code, name };
 }
+async function getJiraFields() {
+  const res = await api.asUser().requestJira(route`/rest/api/3/field`);
+  if (!res.ok) throw new Error(`Could not read Jira fields (${res.status}).`);
+  const fields = await res.json();
+  return (Array.isArray(fields) ? fields : []).map(f => ({
+    id: String(f.id || ''),
+    name: normalizeTextValue(f.name),
+    custom: Boolean(f.custom),
+    schemaType: normalizeTextValue(f.schema?.type),
+    schemaCustom: normalizeTextValue(f.schema?.custom)
+  })).filter(f => f.id && f.name).sort((a,b) => a.name.localeCompare(b.name));
+}
+
 async function getClientOptions(fieldId) {
   if (!fieldId) return [];
   const contextsRes = await api.asUser().requestJira(route`/rest/api/3/field/${fieldId}/context?maxResults=100`);
@@ -379,6 +410,8 @@ resolver.define('getAdminData', async () => {
 
   const autoTestStatus = await buildAutoTestStatus(contacts, settings);
   let clientOptions = [];
+  let jiraFields = [];
+  try { jiraFields = await getJiraFields(); } catch (e) { console.warn('Could not load Jira fields:', e.message); }
   try { clientOptions = await getClientOptions(settings.clientFieldId); } catch (e) { console.warn('Could not load client options:', e.message); }
   // Keep Jira display conditions in sync with the admin configuration.
   // This also seeds the property automatically after upgrading from an older version.
@@ -394,7 +427,7 @@ resolver.define('getAdminData', async () => {
     sms: pStatus.sms.configured,
     contacts: contacts.length
   };
-  return { settings, contacts, clientOptions, providerSettings: providers, templates, branding, providerStatus: pStatus, setupStatus, autoTestStatus, appVersion: APP_VERSION };
+  return { settings, contacts, clientOptions, jiraFields, providerSettings: providers, templates, branding, providerStatus: pStatus, setupStatus, autoTestStatus, appVersion: APP_VERSION };
 });
 
 resolver.define('saveSettings', async ({ payload }) => {
@@ -466,23 +499,6 @@ resolver.define('saveBranding', async ({ payload }) => {
 
 resolver.define('resetBranding', async () => {
   await kvs.delete(BRANDING_SETTINGS_KEY);
-  return await getBranding();
-});
-
-resolver.define('saveBrandLogo', async ({ payload }) => {
-  const contentType = normalizeTextValue(payload?.contentType).toLowerCase();
-  const fileName = normalizeTextValue(payload?.fileName || 'logo').replace(/[\r\n]/g, '').slice(0, 120);
-  const data = String(payload?.data || '').replace(/\s/g, '');
-  if (!['image/png','image/jpeg'].includes(contentType)) throw new Error('Logo must be a PNG or JPG image.');
-  if (!data) throw new Error('No logo image was supplied.');
-  const bytes = Buffer.from(data, 'base64');
-  if (!bytes.length) throw new Error('The logo image is empty.');
-  if (bytes.length > BRAND_LOGO_MAX_BYTES) throw new Error('Logo is too large. Please use a PNG/JPG smaller than 140 KB.');
-  await kvs.set(BRAND_LOGO_KEY, { contentType, fileName, data });
-  return await getBranding();
-});
-resolver.define('deleteBrandLogo', async () => {
-  await kvs.delete(BRAND_LOGO_KEY);
   return await getBranding();
 });
 
@@ -701,7 +717,8 @@ function buildPreviewModel(a, templates = DEFAULT_TEMPLATES, brandingInput = DEF
     footerText: renderTemplate(branding.footerText || DEFAULT_BRANDING.footerText, a),
     supportLabel: branding.supportLabel || '',
     supportUrl: branding.supportUrl || '',
-    logoUrl: branding.logoDataUrl || branding.logoUrl || ''
+    logoUrl: branding.logoUrl || '',
+    logoSrc: branding.logoDataUri || branding.logoUrl || ''
   };
 }
 
@@ -794,9 +811,9 @@ function buildEmailHtml(a, templates = DEFAULT_TEMPLATES, brandingInput = DEFAUL
   const defaultFollowup = isTest ? 'No action is required unless acknowledgement is part of the agreed test process.' : isResolved ? 'No further incident updates are planned at this time. The Service Desk will continue to monitor the service.' : 'Our support team is actively managing this incident. A further update will be provided by the time shown above, or sooner if there is a significant change.';
   const followup = renderTemplate(template.followup || defaultFollowup, a);
 
-  const emailLogoSrc = branding.logoDataUrl ? 'cid:system-alert-logo' : branding.logoUrl;
-  const logo = emailLogoSrc
-    ? `<img src="${esc(emailLogoSrc)}" alt="" style="display:block;max-height:44px;max-width:190px;margin-bottom:13px;border:0">`
+  const logoSrc = branding.logoDataUri ? 'cid:system-alert-logo' : branding.logoUrl;
+  const logo = logoSrc
+    ? `<img src="${esc(logoSrc)}" alt="" style="display:block;max-height:44px;max-width:190px;margin-bottom:13px;border:0">`
     : '';
   const support = branding.supportUrl
     ? `<div style="margin-top:6px"><a href="${esc(branding.supportUrl)}" style="color:${branding.accentColor};text-decoration:none">${esc(branding.supportLabel || branding.supportUrl)}</a></div>`
@@ -855,7 +872,7 @@ async function sendTwilio(to, body) {
   return { sid: j.sid, status: j.status };
 }
 
-async function sendEmail(toEmails, subject, html, text, fromName, replyToEmail='', inlineLogo=null) {
+async function sendEmail(toEmails, subject, html, text, fromName, replyToEmail='', branding=null) {
   const cfg = await getProviderSettings();
   const apiKey = (await getProviderSecret('sendgridApiKey')) || process.env.SENDGRID_API_KEY;
   const fromEmail = cfg.sendgridFromEmail || process.env.ALERT_FROM_EMAIL;
@@ -872,9 +889,8 @@ async function sendEmail(toEmails, subject, html, text, fromName, replyToEmail='
     subject,
     content: [{ type: 'text/plain', value: text }, { type: 'text/html', value: html }]
   };
-  if (inlineLogo?.data && inlineLogo?.contentType) {
-    body.attachments = [{ content:inlineLogo.data, type:inlineLogo.contentType, filename:inlineLogo.fileName || (inlineLogo.contentType === 'image/png' ? 'system-alert-logo.png' : 'system-alert-logo.jpg'), disposition:'inline', content_id:'system-alert-logo' }];
-  }
+  const logoAttachment = logoAttachmentFromBranding(branding || {});
+  if (logoAttachment) body.attachments = [logoAttachment];
   const res = await fetch('https://api.sendgrid.com/v3/mail/send', {
     method:'POST',
     headers:{'Authorization':`Bearer ${apiKey}`,'Content-Type':'application/json'},
@@ -977,7 +993,7 @@ resolver.define('sendAlert', async ({ payload, context }) => {
 
   const results = { email: { attempted: emailRecipients.length, ok: false }, sms: { attempted: smsRecipients.length, sent: 0, failed: [] } };
   if (emailRecipients.length) {
-    await sendEmail(emailRecipients, subject, html, text, settings.fromName, settings.replyToEmail, await getBrandLogo());
+    await sendEmail(emailRecipients, subject, html, text, settings.fromName, settings.replyToEmail, branding);
     results.email.ok = true;
   }
 
@@ -1091,7 +1107,7 @@ export async function monthlyTestScheduler() {
       const html = buildEmailHtml(a, templates, branding);
       let emailOk = false;
       if (emailRecipients.length) {
-        await sendEmail(emailRecipients, subject, html, text, settings.fromName, settings.replyToEmail, await getBrandLogo());
+        await sendEmail(emailRecipients, subject, html, text, settings.fromName, settings.replyToEmail, branding);
         emailOk = true;
       }
       const smsText = buildSmsText(a, templates);

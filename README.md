@@ -1,4 +1,4 @@
-# System Alert Manager v3.7.8
+# System Alert Manager v3.7.9
 
 Marketplace-readiness configuration release based on the working v3.6.1 build.
 
@@ -60,21 +60,24 @@ Branding and focused template management release.
 - No changes to delivery provider configuration or recipient logic.
 
 
-## v3.7.8 branding preview fix
+## v3.7.7 branding preview fix
 - Ticket email preview no longer overrides saved header/footer branding colours with hard-coded CSS.
-- Alert, admin, panel, backend and package version markers aligned to 3.7.8.
+- Alert, admin, panel, backend and package version markers aligned to 3.7.7.
 
 
-## v3.7.8 branding polish
+## v3.7.7 branding polish
 - Header text colour now applies consistently to the service name and incident title in both admin and ticket previews.
 - Preview logos that fail to load are hidden cleanly instead of showing a broken-image icon.
-- Runtime version labels are aligned at v3.7.8.
+- Runtime version labels are aligned at v3.7.7.
 
-## v3.7.8 uploaded branding logo
 
-- Branding now supports a direct PNG/JPG logo upload (maximum 140 KB).
-- The logo is stored per Forge installation rather than relying on an external website URL.
-- Admin and ticket previews use the stored logo immediately.
-- SendGrid emails embed the stored logo as an inline CID image so recipients do not depend on an external image host.
-- The existing Logo URL remains available as an optional fallback.
-- No additional Forge permission scopes are required.
+## v3.7.9 Jira field mapping
+- General settings now load Jira fields into friendly dropdowns instead of requiring raw custom field IDs.
+- Issue Start Time and Next Update Due selectors are filtered to Jira date/date-time fields.
+- Existing configured field IDs are preserved during upgrade.
+
+
+## v3.7.9
+- Direct PNG/JPG logo upload in Branding.
+- Uploaded logo is used in Admin preview, ticket preview and outgoing SendGrid email.
+- SendGrid embeds uploaded logos as an inline CID image; fallback Logo URL remains supported.
