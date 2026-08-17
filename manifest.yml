@@ -57,6 +57,8 @@ permissions:
         - address: https://api.twilio.com
         - address: https://api.dublin.ie1.twilio.com
         - address: https://api.sendgrid.com
+        - address: https://login.microsoftonline.com
+        - address: https://graph.microsoft.com
 
 app:
   runtime:

@@ -1,7 +1,7 @@
 import { invoke } from '@forge/bridge';
 import './styles.css';
 
-const APP_VERSION = '3.7.9';
+const APP_VERSION = '3.8.0';
 const app = document.querySelector('#app');
 
 const state = {
@@ -77,6 +77,7 @@ function render() {
         ${jiraFieldSelect('clientFieldId','Client Jira field', settings.clientFieldId || '', jiraFields, 'Select the Jira field that identifies the client.')}
         ${jiraFieldSelect('issueStartFieldId','Issue Start Time field', settings.issueStartFieldId || '', jiraFields, 'Select the date/time field used for the incident start.', true)}
         ${jiraFieldSelect('nextUpdateFieldId','Next Update Due field', settings.nextUpdateFieldId || '', jiraFields, 'Select the date/time field used for the next customer update.', true)}
+        <div class="field wide"><label>Additional incident fields</label><p class="help">Optional Jira fields can be exposed to templates. Each mapping creates a token such as <code>{{field.impact}}</code>.</p><div id="optionalFieldRows" class="optional-field-list">${renderOptionalFieldRows(settings.optionalFieldMappings || [], jiraFields)}</div><button id="addOptionalField" class="btn secondary small" type="button">+ Add incident field</button></div>
         ${field('allowedProjectKey','Allowed project', settings.allowedProjectKey || 'SD', 'SD')}
         ${field('fromName','Sender display name', settings.fromName || 'Service Desk', 'Service Desk')}
         ${field('replyToEmail','Reply-to email', settings.replyToEmail || '', 'servicedesk@example.com','', 'email')}
@@ -87,17 +88,34 @@ function render() {
 
     ${active === 'providers' ? `
     <section class="card">
-      <div class="card-head"><div><h2>Communication providers</h2><p>Configure SendGrid email and Twilio SMS. Secret values are stored encrypted and are never displayed again after saving.</p></div></div>
+      <div class="card-head"><div><h2>Communication providers</h2><p>Choose the email service that best fits your organisation. Credentials are stored encrypted and are never displayed again after saving.</p></div></div>
       <div class="card-body provider-grid">
         ${providerCard('Email', providerStatus.email)}
         ${providerCard('SMS', providerStatus.sms)}
       </div>
       <form id="providerForm" class="card-body provider-config-grid">
-        <div class="provider-config-block"><h3>Email · SendGrid</h3><p class="help">Existing Forge environment variables remain supported. Enter a secret only when adding or replacing it.</p>
-          ${field('sendgridFromEmail','From email', providerSettings.sendgridFromEmail || providerStatus.email?.from || '', 'servicedesk@example.com','', 'email')}
+        <div class="provider-config-block email-provider-block wide">
+          <h3>Email provider</h3><p class="help">SendGrid is quick to configure. Microsoft 365 sends through an existing Exchange Online mailbox using Microsoft Graph.</p>
+          <div class="provider-choice">
+            <label class="provider-option"><input type="radio" name="emailProvider" value="sendgrid" ${providerSettings.emailProvider!=='microsoft365'?'checked':''}><span><strong>SendGrid</strong><small>API key + verified sender</small></span></label>
+            <label class="provider-option"><input type="radio" name="emailProvider" value="microsoft365" ${providerSettings.emailProvider==='microsoft365'?'checked':''}><span><strong>Microsoft 365</strong><small>Existing mailbox via Microsoft Graph</small></span></label>
+          </div>
+        </div>
+        <div id="sendgridConfig" class="provider-config-block" style="display:${providerSettings.emailProvider==='microsoft365'?'none':'block'}"><h3>Email · SendGrid</h3><p class="help">Existing Forge environment variables remain supported. Enter a secret only when adding or replacing it.</p>
+          ${field('sendgridFromEmail','From email', providerSettings.sendgridFromEmail || (providerSettings.emailProvider!=='microsoft365'?providerStatus.email?.from:'') || '', 'servicedesk@example.com','', 'email')}
           ${field('sendgridFromName','From name', providerSettings.sendgridFromName || settings.fromName || 'Service Desk', 'Service Desk')}
           ${field('sendgridReplyToEmail','Reply-to email', providerSettings.sendgridReplyToEmail || settings.replyToEmail || '', 'servicedesk@example.com','', 'email')}
-          ${secretField('sendgridApiKey','SendGrid API key', providerStatus.email?.configured ? 'Configured — leave blank to keep current key' : 'SG.xxxxx')}
+          ${secretField('sendgridApiKey','SendGrid API key', providerSettings.emailProvider!=='microsoft365' && providerStatus.email?.configured ? 'Configured — leave blank to keep current key' : 'SG.xxxxx')}
+          <div class="provider-guide"><strong>Quick setup</strong><ol><li>Create or use a SendGrid account.</li><li>Verify a sender address or authenticate the company domain.</li><li>Create an API key with Mail Send permission.</li><li>Paste the key here and send a test email below.</li></ol></div>
+        </div>
+        <div id="microsoftConfig" class="provider-config-block" style="display:${providerSettings.emailProvider==='microsoft365'?'block':'none'}"><h3>Email · Microsoft 365</h3><p class="help">Use the organisation's existing mailbox. Your Microsoft administrator only needs to provide the Entra application details once.</p>
+          ${field('microsoftTenantId','Tenant ID', providerSettings.microsoftTenantId || '', 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx')}
+          ${field('microsoftClientId','Application (Client) ID', providerSettings.microsoftClientId || '', 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx')}
+          ${secretField('microsoftClientSecret','Client secret', providerSettings.emailProvider==='microsoft365' && providerStatus.email?.configured ? 'Configured — leave blank to keep current secret' : 'Paste client secret')}
+          ${field('microsoftSenderMailbox','Sender mailbox', providerSettings.microsoftSenderMailbox || '', 'servicedesk@company.com','', 'email')}
+          ${field('microsoftFromName','From name', providerSettings.microsoftFromName || settings.fromName || 'Service Desk', 'Service Desk')}
+          ${field('microsoftReplyToEmail','Reply-to email', providerSettings.microsoftReplyToEmail || providerSettings.microsoftSenderMailbox || '', 'servicedesk@company.com','', 'email')}
+          <div class="provider-guide"><strong>Microsoft IT request</strong><p>Ask Microsoft 365 IT to create an Entra app registration, grant Microsoft Graph <b>Application → Mail.Send</b>, grant admin consent, and restrict the app to the required sender mailbox. Then enter the Tenant ID, Client ID and Client Secret above.</p><textarea id="microsoftItRequest" rows="7" readonly>Request: System Alert Manager Microsoft 365 email access\n\nPlease create an Entra application registration for System Alert Manager and grant Microsoft Graph Application permission Mail.Send with admin consent. Please restrict application access to the sender mailbox only where possible.\n\nPlease provide: Tenant ID, Application (Client) ID and Client Secret. No Mail.Read or Mail.ReadWrite permission is required.</textarea><button id="copyMicrosoftRequest" class="btn secondary small" type="button">Copy IT request</button></div>
         </div>
         <div class="provider-config-block"><h3>SMS · Twilio</h3><p class="help">Use either a From number or Messaging Service SID. Existing Forge variables remain supported.</p>
           ${secretField('twilioAccountSid','Account SID', providerStatus.sms?.configured ? 'Configured — leave blank to keep current SID' : 'ACxxxxxxxx')}
@@ -108,6 +126,7 @@ function render() {
           ${field('twilioMessagingServiceSid','Messaging Service SID', providerSettings.twilioMessagingServiceSid || '', 'MGxxxxxxxx')}
           <div class="field"><label for="twilioRegion">Twilio region</label><select id="twilioRegion"><option value="global" ${providerSettings.twilioRegion!=='ie1'?'selected':''}>Global</option><option value="ie1" ${providerSettings.twilioRegion==='ie1'?'selected':''}>Ireland (IE1)</option></select></div>
         </div>
+        <div class="provider-test wide"><div class="field"><label for="testEmailRecipient">Test email recipient</label><input id="testEmailRecipient" type="email" placeholder="your.name@example.com"></div><button id="testEmailProvider" class="btn secondary" type="button">Send test email</button></div>
         <div class="form-actions wide"><button class="btn primary" type="submit">Save provider configuration</button></div>
       </form>
     </section>` : ''}
@@ -188,7 +207,8 @@ function renderBrandingEditor(b = {}) {
 
 function renderSingleTemplatePage(key, template = {}) {
   const labels = {initial:'Initial Alert',update:'Incident Update',resolved:'Service Restored','monthly-test':'Monthly Test'};
-  return `<div class="card-body template-help"><strong>Available tokens:</strong> {{priority}}, {{jiraPriority}}, {{clientCode}}, {{issueKey}}, {{summary}}, {{startTime}}, {{nextUpdate}}, {{message}}, {{testMonth}}</div>
+  const mappedTokens=(state.data.settings?.optionalFieldMappings||[]).map(m=>`{{field.${esc(m.token)}}}`).join(', ');
+  return `<div class="card-body template-help"><strong>Available tokens:</strong> {{priority}}, {{jiraPriority}}, {{clientCode}}, {{issueKey}}, {{summary}}, {{startTime}}, {{nextUpdate}}, {{message}}, {{testMonth}}${mappedTokens ? ', '+mappedTokens : ''}</div>
   <form id="singleTemplateForm" class="card-body single-template-layout" data-template-key="${esc(key)}">
     <div class="template-editor-main"><div class="section-title"><h3>${esc(labels[key] || key)}</h3><p>Customize the customer-facing wording. Branding and responsive layout are inherited automatically.</p></div>
       <div class="field"><label for="templateSubject">Email subject</label><input id="templateSubject" value="${esc(template.subject || '')}"></div>
@@ -334,6 +354,21 @@ function renderAutoTestStatus(status = {}) {
   }).join('')}</div>`;
 }
 
+function renderOptionalFieldRows(rows = [], fields = []) {
+  if (!rows.length) return '<div class="optional-field-empty">No additional incident fields configured.</div>';
+  return rows.map((row,i) => `<div class="optional-field-row" data-optional-field-row><div class="field"><label>Jira field</label>${jiraFieldSelectInner('optionalFieldId', row.fieldId || '', fields)}</div><div class="field"><label>Template token</label><div class="token-input"><span>{{field.</span><input class="optional-field-token" value="${esc(row.token || '')}" placeholder="impact"><span>}}</span></div></div><div class="field"><label>Label</label><input class="optional-field-label" value="${esc(row.label || '')}" placeholder="Impact"></div><button class="btn danger small remove-optional-field" type="button">Remove</button></div>`).join('');
+}
+function jiraFieldSelectInner(cls, value, fields) {
+  const list = Array.isArray(fields) ? fields : [];
+  return `<select class="${cls}"><option value="">Select a Jira field…</option>${list.map(f=>`<option value="${esc(f.id)}" ${f.id===value?'selected':''}>${esc(f.name)}${f.custom?' — Custom field':''}</option>`).join('')}</select>`;
+}
+function collectOptionalFieldMappings() {
+  return [...document.querySelectorAll('[data-optional-field-row]')].map(row=>({fieldId:row.querySelector('.optionalFieldId')?.value || '',token:row.querySelector('.optional-field-token')?.value?.trim() || '',label:row.querySelector('.optional-field-label')?.value?.trim() || ''})).filter(x=>x.fieldId);
+}
+function bindOptionalFieldButtons() {
+  document.querySelectorAll('.remove-optional-field').forEach(btn=>btn.onclick=()=>{btn.closest('[data-optional-field-row]')?.remove(); if(!document.querySelector('[data-optional-field-row]')) byId('optionalFieldRows').innerHTML='<div class="optional-field-empty">No additional incident fields configured.</div>';});
+}
+
 function jiraFieldSelect(id, label, value, fields, help='', dateOnly=false) {
   let list = Array.isArray(fields) ? fields : [];
   if (dateOnly) list = list.filter(f => ['date','datetime'].includes(String(f.schemaType || '').toLowerCase()));
@@ -413,6 +448,7 @@ function bindEvents() {
         clientFieldId: getValue('clientFieldId'),
         issueStartFieldId: getValue('issueStartFieldId'),
         nextUpdateFieldId: getValue('nextUpdateFieldId'),
+        optionalFieldMappings: collectOptionalFieldMappings(),
         allowedProjectKey: getValue('allowedProjectKey'),
         fromName: getValue('fromName'),
         replyToEmail: getValue('replyToEmail'),
@@ -425,6 +461,14 @@ function bindEvents() {
     });
   };
 
+  if (byId('addOptionalField')) byId('addOptionalField').onclick = () => {
+    const host=byId('optionalFieldRows');
+    if (host?.querySelector('.optional-field-empty')) host.innerHTML='';
+    const wrap=document.createElement('div'); wrap.innerHTML=renderOptionalFieldRows([{fieldId:'',token:'',label:''}],state.data.jiraFields||[]);
+    host.appendChild(wrap.firstElementChild); bindOptionalFieldButtons();
+  };
+  bindOptionalFieldButtons();
+
   if (byId('addPriority')) byId('addPriority').onclick = () => {
     const host = byId('priorityConfigRows');
     const wrapper = document.createElement('div');
@@ -435,14 +479,25 @@ function bindEvents() {
   };
   bindPriorityRowButtons();
 
+  document.querySelectorAll('input[name="emailProvider"]').forEach(r=>r.onchange=()=>{const ms=r.value==='microsoft365'&&r.checked; const sg=byId('sendgridConfig'), mc=byId('microsoftConfig'); if(sg)sg.style.display=ms?'none':'block'; if(mc)mc.style.display=ms?'block':'none';});
+  if (byId('copyMicrosoftRequest')) byId('copyMicrosoftRequest').onclick = async () => { try { await navigator.clipboard.writeText(byId('microsoftItRequest')?.value || ''); state.message='IT request copied.'; render(); } catch { state.error='Could not copy automatically. Select the IT request text and copy it manually.'; render(); } };
+  if (byId('testEmailProvider')) byId('testEmailProvider').onclick = async () => { const recipient=getValue('testEmailRecipient'); if(!recipient){state.error='Enter a test email recipient.';return render();} await act(async()=>{ await invoke('testEmailProvider',{recipient}); state.message=`Test email sent to ${recipient}.`; render(); }); };
+
   if (byId('providerForm')) byId('providerForm').onsubmit = async e => {
     e.preventDefault();
     await act(async () => {
       await invoke('saveProviderSettings', {
+        emailProvider: document.querySelector('input[name="emailProvider"]:checked')?.value || 'sendgrid',
         sendgridFromEmail: getValue('sendgridFromEmail'),
         sendgridFromName: getValue('sendgridFromName'),
         sendgridReplyToEmail: getValue('sendgridReplyToEmail'),
         sendgridApiKey: getValue('sendgridApiKey'),
+        microsoftTenantId: getValue('microsoftTenantId'),
+        microsoftClientId: getValue('microsoftClientId'),
+        microsoftClientSecret: getValue('microsoftClientSecret'),
+        microsoftSenderMailbox: getValue('microsoftSenderMailbox'),
+        microsoftFromName: getValue('microsoftFromName'),
+        microsoftReplyToEmail: getValue('microsoftReplyToEmail'),
         twilioAccountSid: getValue('twilioAccountSid'),
         twilioAuthToken: getValue('twilioAuthToken'),
         twilioApiKey: getValue('twilioApiKey'),

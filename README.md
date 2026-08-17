@@ -1,83 +1,22 @@
-# System Alert Manager v3.7.9
+# System Alert Manager v3.8.0
 
-Marketplace-readiness configuration release based on the working v3.6.1 build.
+System Alert Manager for Jira Service Management provides controlled client-isolated incident communications by email and SMS.
 
-## What is new
-- Setup status dashboard showing Jira, client list, email, SMS and contact readiness.
-- Communication provider configuration inside the app admin page.
-- SendGrid sender, reply-to and API key configuration.
-- Twilio Account SID, Auth Token/API key, sender number or Messaging Service SID and region configuration.
-- Provider secrets are stored with Forge encrypted secret storage and are never returned to the browser after saving.
-- Existing Forge environment variables remain supported as a fallback, so upgrading does not force an immediate credential migration.
-- Editable customer communication templates for Initial Alert, Incident Update, Service Restored and Monthly Test.
-- Editable email subject, introduction, follow-up and SMS wording.
-- Template tokens: {{priority}}, {{jiraPriority}}, {{clientCode}}, {{issueKey}}, {{summary}}, {{startTime}}, {{nextUpdate}}, {{message}}, {{testMonth}}.
-- Reset templates to System Alert defaults.
-- Existing professional HTML email layout is retained; template editing changes the wording rather than exposing raw HTML.
+## v3.8.0 highlights
 
-## Preserved from v3.6.1
-- Jira-driven Client field options and option-ID client isolation.
-- Configurable System Alert priorities.
-- SendGrid email and Twilio SMS delivery.
-- Monthly first-Wednesday automatic test.
-- Professional HTML email preview.
-- Contact test email/SMS actions.
-- Duplicate contact protection and grouped client contact management.
-- Issue action/panel and backend recipient safety validation.
+- Jira field mapping by field name rather than raw custom field IDs.
+- Optional incident-field mappings that create template tokens such as `{{field.impact}}`.
+- Email provider selection between SendGrid and Microsoft 365 / Microsoft Graph.
+- Microsoft 365 configuration stored securely in Forge KVS secrets.
+- Built-in Microsoft IT request text to simplify the one-time Entra setup request.
+- Provider test email action.
+- Existing SendGrid and Twilio configuration remains supported.
+- Existing branding, embedded logo, client isolation, priority configuration, monthly test, templates, and communication history remain intact.
 
-## Credential migration
-You do not have to re-enter existing SendGrid or Twilio credentials immediately. v3.7.1 first checks encrypted provider settings saved in the app and then falls back to the existing Forge environment variables.
+## Microsoft 365 mode
 
-To migrate later, open System Alert Contacts > Communication providers and save the credentials there. Secret values are write-only in the admin UI.
+Microsoft 365 mode uses Microsoft Graph application authentication. The Microsoft administrator provides Tenant ID, Client ID, Client Secret, and grants Microsoft Graph Application `Mail.Send` permission with admin consent. The app then sends through the configured Exchange Online mailbox. No mailbox read permission is required by System Alert Manager.
 
+## Development deployment
 
-## v3.7.1
-Admin configuration is now split into General, Clients & Contacts, Communication Providers, Templates, and Monthly Test sections. Sending logic and provider storage remain unchanged.
-
-
-## v3.7.3
-
-Branding and focused template management release.
-
-- Added a dedicated Branding sub-section under Templates.
-- Configure service/company name, logo URL, header colours, brand accent, email background, footer background, footer text and optional support link.
-- Branding is inherited by all HTML alert emails without allowing administrators to break the responsive email structure.
-- Templates are edited one alert type at a time: Initial Alert, Incident Update, Service Restored and Monthly Test.
-- Added Preview Email and Preview SMS actions using sample incident data before saving.
-- Added per-template reset to default and branding reset to default.
-- No new Forge scopes. Existing SendGrid, Twilio, client isolation and Jira configuration remain unchanged.
-
-## v3.7.3 preview fixes
-- Branding is now applied to the admin Template/Branding email preview without relying on a nested iframe.
-- Ticket-side Email Preview now uses the saved branding, logo URL, colours, footer and support link.
-- Alert and issue-panel version labels now match the installed app release.
-
-
-## v3.7.4 preview consistency
-- Admin email previews now display the exact HTML produced by the same backend renderer used for outgoing email.
-- Ticket preview and admin preview remain aligned with saved branding and templates.
-- Broken logo images are hidden in browser previews instead of showing a broken-image icon.
-- No changes to delivery provider configuration or recipient logic.
-
-
-## v3.7.7 branding preview fix
-- Ticket email preview no longer overrides saved header/footer branding colours with hard-coded CSS.
-- Alert, admin, panel, backend and package version markers aligned to 3.7.7.
-
-
-## v3.7.7 branding polish
-- Header text colour now applies consistently to the service name and incident title in both admin and ticket previews.
-- Preview logos that fail to load are hidden cleanly instead of showing a broken-image icon.
-- Runtime version labels are aligned at v3.7.7.
-
-
-## v3.7.9 Jira field mapping
-- General settings now load Jira fields into friendly dropdowns instead of requiring raw custom field IDs.
-- Issue Start Time and Next Update Due selectors are filtered to Jira date/date-time fields.
-- Existing configured field IDs are preserved during upgrade.
-
-
-## v3.7.9
-- Direct PNG/JPG logo upload in Branding.
-- Uploaded logo is used in Admin preview, ticket preview and outgoing SendGrid email.
-- SendGrid embeds uploaded logos as an inline CID image; fallback Logo URL remains supported.
+Run `deploy-dev.ps1` from the project root. If Forge requests a major-version approval because of the new Microsoft Graph external egress configuration, run the approval command shown by Forge, then run `forge install --upgrade`.

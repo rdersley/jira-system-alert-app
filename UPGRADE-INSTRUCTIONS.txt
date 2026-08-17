@@ -1,35 +1,13 @@
-System Alert Manager v3.7.7 upgrade
+System Alert Manager v3.8.0 upgrade
 
-1. Extract this package over your existing GitHub-controlled app folder:
-   C:\jiraapps\jira-system-alert-app
-
-2. Build the alert UI:
-   cd C:\jiraapps\jira-system-alert-app\static\alert
-   npm install
-   npm run build
-
-3. Build the admin UI:
-   cd ..\admin
-   npm install
-   npm run build
-
-4. Build the issue panel:
-   cd ..\panel
-   npm install
-   npm run build
-
-5. Validate from the app root:
-   cd C:\jiraapps\jira-system-alert-app
-   npm install
-   forge lint
-
-6. If lint is clean, commit/push v3.7.7 to GitHub before deployment.
-
-7. Deploy:
-   forge deploy
+1. Copy/extract this package over C:\jiraapps\jira-system-alert-app.
+2. Build the Alert, Admin, and Panel UIs, or run deploy-dev.ps1.
+3. Run forge lint before deploying.
+4. v3.8.0 adds external egress for Microsoft login and Microsoft Graph. Forge may request a MAJOR_VERSION_RULE approval.
+5. If requested, run:
+   forge deploy --approve MAJOR_VERSION_RULE
    forge install --upgrade
-   forge install list
+6. Open System Alert Manager > General and verify the Jira field mappings.
+7. Open Communication Providers, choose SendGrid or Microsoft 365, save the configuration, then send a test email.
 
-No new Forge scopes are introduced by v3.7.7, so another major-version permission approval should not normally be required.
-
-After deployment open System Alert Manager > Templates. Confirm the Branding, Initial Alert, Incident Update, Service Restored and Monthly Test sub-menu items load, then test Preview Email and Preview SMS before changing live wording.
+Existing contacts, branding, templates, SendGrid/Twilio secrets, priorities, and monthly-test settings are preserved.

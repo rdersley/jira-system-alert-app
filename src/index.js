@@ -16,9 +16,10 @@ const PROVIDER_SECRET_KEYS = {
   twilioAccountSid: 'system-alert:provider:twilio-account-sid',
   twilioAuthToken: 'system-alert:provider:twilio-auth-token',
   twilioApiKey: 'system-alert:provider:twilio-api-key',
-  twilioApiSecret: 'system-alert:provider:twilio-api-secret'
+  twilioApiSecret: 'system-alert:provider:twilio-api-secret',
+  microsoftClientSecret: 'system-alert:provider:microsoft-client-secret'
 };
-const APP_VERSION = '3.7.9';
+const APP_VERSION = '3.8.0';
 
 const DEFAULT_SETTINGS = {
   clientFieldId: '',
@@ -35,7 +36,8 @@ const DEFAULT_SETTINGS = {
   monthlyTestHour: 10,
   emailEnabled: true,
   smsEnabled: true,
-  twilioRegion: 'global'
+  twilioRegion: 'global',
+  optionalFieldMappings: []
 };
 
 const DEFAULT_PROVIDER_SETTINGS = {
@@ -43,6 +45,11 @@ const DEFAULT_PROVIDER_SETTINGS = {
   sendgridFromEmail: '',
   sendgridFromName: 'Service Desk',
   sendgridReplyToEmail: '',
+  microsoftTenantId: '',
+  microsoftClientId: '',
+  microsoftSenderMailbox: '',
+  microsoftFromName: 'Service Desk',
+  microsoftReplyToEmail: '',
   smsProvider: 'twilio',
   twilioRegion: 'global',
   twilioFromNumber: '',
@@ -127,6 +134,7 @@ const fieldText = (v) => {
 async function getSettings() {
   const settings = { ...DEFAULT_SETTINGS, ...((await kvs.get(SETTINGS_KEY)) || {}) };
   settings.priorityConfigs = normalizePriorityConfigs(settings.priorityConfigs);
+  settings.optionalFieldMappings = normalizeOptionalFieldMappings(settings.optionalFieldMappings);
   return settings;
 }
 
@@ -203,7 +211,7 @@ function templateContext(a = {}) {
   const summary = subjectSummary(a);
   const startTime = a.startTime || 'Not specified';
   const nextUpdate = a.alertType === 'resolved' ? 'No further update planned' : (a.nextUpdate || 'To be confirmed');
-  return {
+  const ctx = {
     priority: a.priorityLabel || a.priority || 'Priority',
     jiraPriority: a.priority || '',
     clientCode: a.clientCode || '',
@@ -215,11 +223,13 @@ function templateContext(a = {}) {
     testMonth: a.testMonth || monthLabel(),
     referenceLine: a.issueKey ? `Reference: ${a.issueKey}\n` : ''
   };
+  for (const [token, value] of Object.entries(a.templateFields || {})) ctx[`field.${token}`] = value ?? '';
+  return ctx;
 }
 
 function renderTemplate(value, a = {}) {
   const ctx = templateContext(a);
-  return String(value || '').replace(/{{\s*([a-zA-Z0-9]+)\s*}}/g, (_, key) => Object.prototype.hasOwnProperty.call(ctx, key) ? String(ctx[key] ?? '') : `{{${key}}}`);
+  return String(value || '').replace(/{{\s*([a-zA-Z0-9._-]+)\s*}}/g, (_, key) => Object.prototype.hasOwnProperty.call(ctx, key) ? String(ctx[key] ?? '') : `{{${key}}}`);
 }
 
 async function getContact(id) { return await kvs.getSecret(`system-alert:contact:${id}`); }
@@ -240,6 +250,30 @@ const normalizePriorities = (v) => {
   const arr = Array.isArray(v) ? v : (v ? [v] : []);
   return arr.map(normalizeTextValue).filter(Boolean);
 };
+
+const normalizeOptionalFieldMappings = (value) => {
+  const raw = Array.isArray(value) ? value : [];
+  const out = [];
+  const seen = new Set();
+  for (const item of raw) {
+    const fieldId = normalizeTextValue(item?.fieldId);
+    const label = normalizeTextValue(item?.label).slice(0, 80);
+    let token = normalizeTextValue(item?.token).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 40);
+    if (!fieldId) continue;
+    if (!token) token = `field${out.length + 1}`;
+    const key = token.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ fieldId, label, token });
+  }
+  return out.slice(0, 20);
+};
+
+function mappedTemplateFields(issueFields = {}, settings = {}) {
+  const out = {};
+  for (const m of normalizeOptionalFieldMappings(settings.optionalFieldMappings)) out[m.token] = fieldText(issueFields[m.fieldId]);
+  return out;
+}
 
 const normalizePriorityConfigs = (value) => {
   const raw = Array.isArray(value) ? value : [];
@@ -336,13 +370,19 @@ async function getClientOptions(fieldId) {
 }
 async function providerStatus() {
   const cfg = await getProviderSettings();
+  const emailProvider = cfg.emailProvider === 'microsoft365' ? 'microsoft365' : 'sendgrid';
   const sendgridApiKey = (await getProviderSecret('sendgridApiKey')) || process.env.SENDGRID_API_KEY || '';
   const sendgridFromEmail = cfg.sendgridFromEmail || process.env.ALERT_FROM_EMAIL || '';
+  const msSecret = await getProviderSecret('microsoftClientSecret');
+  const msConfigured = Boolean(cfg.microsoftTenantId && cfg.microsoftClientId && msSecret && cfg.microsoftSenderMailbox);
   const twilioAccountSid = (await getProviderSecret('twilioAccountSid')) || process.env.TWILIO_ACCOUNT_SID || '';
   const twilioPassword = (await getProviderSecret('twilioApiSecret')) || (await getProviderSecret('twilioAuthToken')) || process.env.TWILIO_API_SECRET || process.env.TWILIO_AUTH_TOKEN || '';
   const twilioSender = cfg.twilioMessagingServiceSid || cfg.twilioFromNumber || process.env.TWILIO_MESSAGING_SERVICE_SID || process.env.TWILIO_FROM_NUMBER || '';
+  const email = emailProvider === 'microsoft365'
+    ? { configured: msConfigured, provider: 'Microsoft 365', from: cfg.microsoftSenderMailbox || '', source: msSecret ? 'App settings' : '' }
+    : { configured: Boolean(sendgridApiKey && sendgridFromEmail), provider: 'SendGrid', from: sendgridFromEmail, source: (await getProviderSecret('sendgridApiKey')) ? 'App settings' : (process.env.SENDGRID_API_KEY ? 'Forge environment' : '') };
   return {
-    email: { configured: Boolean(sendgridApiKey && sendgridFromEmail), provider: 'SendGrid', from: sendgridFromEmail, source: (await getProviderSecret('sendgridApiKey')) ? 'App settings' : (process.env.SENDGRID_API_KEY ? 'Forge environment' : '') },
+    email,
     sms: { configured: Boolean(twilioAccountSid && twilioPassword && twilioSender), provider: 'Twilio', sender: twilioSender, source: (await getProviderSecret('twilioAccountSid')) ? 'App settings' : (process.env.TWILIO_ACCOUNT_SID ? 'Forge environment' : '') }
   };
 }
@@ -432,7 +472,7 @@ resolver.define('getAdminData', async () => {
 
 resolver.define('saveSettings', async ({ payload }) => {
   const current = await getSettings();
-  const next = { ...current, ...payload, priorityConfigs: normalizePriorityConfigs(payload.priorityConfigs ?? current.priorityConfigs) };
+  const next = { ...current, ...payload, priorityConfigs: normalizePriorityConfigs(payload.priorityConfigs ?? current.priorityConfigs), optionalFieldMappings: normalizeOptionalFieldMappings(payload.optionalFieldMappings ?? current.optionalFieldMappings) };
   if (!normalizeTextValue(next.allowedProjectKey)) throw new Error('An allowed Jira project key is required.');
   if (!next.priorityConfigs.length) throw new Error('Configure at least one System Alert priority.');
   // Update the Jira app property first because issue-panel/action visibility reads this property.
@@ -443,12 +483,18 @@ resolver.define('saveSettings', async ({ payload }) => {
 
 resolver.define('saveProviderSettings', async ({ payload }) => {
   const current = await getProviderSettings();
+  const emailProvider = payload.emailProvider === 'microsoft365' ? 'microsoft365' : 'sendgrid';
   const next = {
     ...current,
-    emailProvider: 'sendgrid',
+    emailProvider,
     sendgridFromEmail: normalizeTextValue(payload.sendgridFromEmail),
     sendgridFromName: normalizeTextValue(payload.sendgridFromName) || 'Service Desk',
     sendgridReplyToEmail: normalizeTextValue(payload.sendgridReplyToEmail),
+    microsoftTenantId: normalizeTextValue(payload.microsoftTenantId),
+    microsoftClientId: normalizeTextValue(payload.microsoftClientId),
+    microsoftSenderMailbox: normalizeTextValue(payload.microsoftSenderMailbox),
+    microsoftFromName: normalizeTextValue(payload.microsoftFromName) || 'Service Desk',
+    microsoftReplyToEmail: normalizeTextValue(payload.microsoftReplyToEmail),
     smsProvider: 'twilio',
     twilioRegion: payload.twilioRegion === 'ie1' ? 'ie1' : 'global',
     twilioFromNumber: normalizeTextValue(payload.twilioFromNumber),
@@ -457,6 +503,7 @@ resolver.define('saveProviderSettings', async ({ payload }) => {
   await kvs.set(PROVIDER_SETTINGS_KEY, next);
   const secretInputs = {
     sendgridApiKey: payload.sendgridApiKey,
+    microsoftClientSecret: payload.microsoftClientSecret,
     twilioAccountSid: payload.twilioAccountSid,
     twilioAuthToken: payload.twilioAuthToken,
     twilioApiKey: payload.twilioApiKey,
@@ -467,6 +514,17 @@ resolver.define('saveProviderSettings', async ({ payload }) => {
     if (clean) await kvs.setSecret(PROVIDER_SECRET_KEYS[name], clean);
   }
   return { settings: next, status: await providerStatus() };
+});
+
+resolver.define('testEmailProvider', async ({ payload }) => {
+  const to = normalizeTextValue(payload?.recipient);
+  if (!to || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to)) throw new Error('Enter a valid test recipient email address.');
+  const branding = await getBranding();
+  const settings = await getSettings();
+  const a = { alertType:'initial', issueKey:'TEST-EMAIL', clientCode:'TEST', priority:'P1', priorityLabel:'P1', priorityConfig:{name:'P1',label:'P1',color:'#AE2E24'}, summary:'System Alert email provider test', startTime:formatDateTime(new Date().toISOString()), nextUpdate:'Not applicable', message:'This is a test email from System Alert Manager.', fromName:settings.fromName };
+  const templates = await getTemplates();
+  await sendEmail([to], 'TEST ONLY | System Alert Manager email configuration', buildEmailHtml(a, templates, branding), buildEmailText(a, templates), settings.fromName, settings.replyToEmail, branding);
+  return { ok:true };
 });
 
 resolver.define('saveTemplates', async ({ payload }) => {
@@ -522,7 +580,8 @@ resolver.define('previewTemplate', async ({ payload }) => {
     nextUpdate: '10:00 Irish time',
     message: type === 'monthly-test' ? 'Scheduled monthly communications test.' : 'Customers are currently experiencing an interruption to the affected service.',
     testMonth: 'August 2026',
-    fromName: branding.serviceName || settings.fromName || 'Service Desk'
+    fromName: branding.serviceName || settings.fromName || 'Service Desk',
+    templateFields: Object.fromEntries((settings.optionalFieldMappings || []).map(m => [m.token, `Example ${m.label || m.token}`]))
   };
   return {
     subject: buildEmailSubject(a, mergedTemplates),
@@ -595,6 +654,7 @@ resolver.define('getIssueAlertData', async ({ payload }) => {
   if (settings.clientFieldId) fieldList.push(settings.clientFieldId);
   if (settings.issueStartFieldId) fieldList.push(settings.issueStartFieldId);
   if (settings.nextUpdateFieldId) fieldList.push(settings.nextUpdateFieldId);
+  for (const m of settings.optionalFieldMappings || []) if (m.fieldId && !fieldList.includes(m.fieldId)) fieldList.push(m.fieldId);
   const r = await api.asUser().requestJira(route`/rest/api/3/issue/${payload.issueKey}?fields=${fieldList.join(',')}`);
   if (!r.ok) throw new Error(`Could not read Jira issue (${r.status}).`);
   const issue = await r.json();
@@ -607,6 +667,7 @@ resolver.define('getIssueAlertData', async ({ payload }) => {
   const priorityConfig = getPriorityConfig(settings, priority);
   const issueStartTime = settings.issueStartFieldId ? formatDateTime(fieldText(issue.fields[settings.issueStartFieldId])) : '';
   const nextUpdateDue = settings.nextUpdateFieldId ? formatDateTime(fieldText(issue.fields[settings.nextUpdateFieldId])) : '';
+  const templateFields = mappedTemplateFields(issue.fields, settings);
   const all = await getAllContacts();
   const contacts = all.map(c => ({
     ...c,
@@ -646,6 +707,8 @@ resolver.define('getIssueAlertData', async ({ payload }) => {
     clientCode,
     issueStartTime,
     nextUpdateDue,
+    templateFields,
+    optionalFieldMappings: settings.optionalFieldMappings || [],
     contacts,
     history,
     monthlyHistory,
@@ -872,8 +935,43 @@ async function sendTwilio(to, body) {
   return { sid: j.sid, status: j.status };
 }
 
+async function getMicrosoftAccessToken(cfg) {
+  const tenantId = normalizeTextValue(cfg.microsoftTenantId);
+  const clientId = normalizeTextValue(cfg.microsoftClientId);
+  const clientSecret = await getProviderSecret('microsoftClientSecret');
+  if (!tenantId || !clientId || !clientSecret) throw new Error('Microsoft 365 is not configured. Add Tenant ID, Client ID and Client Secret in Communication Providers.');
+  const body = new URLSearchParams({ client_id: clientId, client_secret: clientSecret, scope: 'https://graph.microsoft.com/.default', grant_type: 'client_credentials' });
+  const res = await fetch(`https://login.microsoftonline.com/${encodeURIComponent(tenantId)}/oauth2/v2.0/token`, { method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body:body.toString() });
+  if (!res.ok) throw new Error(`Microsoft 365 authentication failed (${res.status}): ${await res.text()}`);
+  const data = await res.json();
+  if (!data.access_token) throw new Error('Microsoft 365 did not return an access token.');
+  return data.access_token;
+}
+
+async function sendMicrosoft365(toEmails, subject, html, text, fromName, replyToEmail='', branding=null) {
+  const cfg = await getProviderSettings();
+  const sender = normalizeTextValue(cfg.microsoftSenderMailbox);
+  if (!sender) throw new Error('Microsoft 365 sender mailbox is not configured.');
+  const recipients = [...new Set((toEmails || []).map(normalizeTextValue).filter(Boolean))];
+  if (!recipients.length) return true;
+  const token = await getMicrosoftAccessToken(cfg);
+  const replyTo = normalizeTextValue(cfg.microsoftReplyToEmail || replyToEmail || sender);
+  const message = {
+    subject,
+    body: { contentType: 'HTML', content: html },
+    toRecipients: recipients.map(address => ({ emailAddress: { address } })),
+    replyTo: replyTo ? [{ emailAddress: { address: replyTo, name: normalizeTextValue(cfg.microsoftFromName || fromName || 'Service Desk') } }] : []
+  };
+  const logo = logoAttachmentFromBranding(branding || {});
+  if (logo) message.attachments = [{ '@odata.type':'#microsoft.graph.fileAttachment', name:logo.filename, contentType:logo.type, contentBytes:logo.content, isInline:true, contentId:logo.content_id }];
+  const res = await fetch(`https://graph.microsoft.com/v1.0/users/${encodeURIComponent(sender)}/sendMail`, { method:'POST', headers:{'Authorization':`Bearer ${token}`,'Content-Type':'application/json'}, body:JSON.stringify({message, saveToSentItems:true}) });
+  if (!res.ok) throw new Error(`Microsoft 365 email send failed (${res.status}): ${await res.text()}`);
+  return true;
+}
+
 async function sendEmail(toEmails, subject, html, text, fromName, replyToEmail='', branding=null) {
   const cfg = await getProviderSettings();
+  if (cfg.emailProvider === 'microsoft365') return await sendMicrosoft365(toEmails, subject, html, text, fromName, replyToEmail, branding);
   const apiKey = (await getProviderSecret('sendgridApiKey')) || process.env.SENDGRID_API_KEY;
   const fromEmail = cfg.sendgridFromEmail || process.env.ALERT_FROM_EMAIL;
   if (!apiKey || !fromEmail) throw new Error('Email provider is not configured. Add the SendGrid API key and sender address in System Alert > Communication providers or Forge environment variables.');
@@ -906,6 +1004,7 @@ resolver.define('previewEmail', async ({ payload }) => {
   if (settings.clientFieldId) fields.push(settings.clientFieldId);
   if (settings.issueStartFieldId) fields.push(settings.issueStartFieldId);
   if (settings.nextUpdateFieldId) fields.push(settings.nextUpdateFieldId);
+  for (const m of settings.optionalFieldMappings || []) if (m.fieldId && !fields.includes(m.fieldId)) fields.push(m.fieldId);
   const check = await api.asUser().requestJira(route`/rest/api/3/issue/${payload.issueKey}?fields=${fields.join(',')}`);
   if (!check.ok) throw new Error(`Could not validate Jira issue (${check.status}).`);
   const currentIssue = await check.json();
@@ -922,7 +1021,7 @@ resolver.define('previewEmail', async ({ payload }) => {
   // fall back to the configured Jira custom field so the preview always matches the ticket.
   const startTime = payload.startTime || (settings.issueStartFieldId ? formatDateTime(fieldText(currentIssue.fields[settings.issueStartFieldId])) : '');
   const nextUpdate = payload.nextUpdate || (settings.nextUpdateFieldId ? formatDateTime(fieldText(currentIssue.fields[settings.nextUpdateFieldId])) : '');
-  const a = { ...payload, clientCode: currentClientCode, startTime, nextUpdate, priority: currentPriority, priorityLabel: currentPriorityConfig.label, priorityConfig: currentPriorityConfig, fromName: settings.fromName, testMonth: payload.testMonth || monthLabel() };
+  const a = { ...payload, clientCode: currentClientCode, startTime, nextUpdate, priority: currentPriority, priorityLabel: currentPriorityConfig.label, priorityConfig: currentPriorityConfig, fromName: settings.fromName, testMonth: payload.testMonth || monthLabel(), templateFields: mappedTemplateFields(currentIssue.fields, settings) };
   const templates = await getTemplates();
   const branding = await getBranding();
   const presentation = emailPresentation(a);
@@ -937,6 +1036,7 @@ resolver.define('previewEmail', async ({ payload }) => {
 resolver.define('sendAlert', async ({ payload, context }) => {
   const settings = await getSettings();
   const validationFields = ['priority','project'];
+  for (const m of settings.optionalFieldMappings || []) if (m.fieldId && !validationFields.includes(m.fieldId)) validationFields.push(m.fieldId);
   if (settings.clientFieldId) validationFields.push(settings.clientFieldId);
   const check = await api.asUser().requestJira(route`/rest/api/3/issue/${payload.issueKey}?fields=${validationFields.join(',')}`);
   if (!check.ok) throw new Error(`Could not validate Jira issue (${check.status}).`);
@@ -976,7 +1076,7 @@ resolver.define('sendAlert', async ({ payload, context }) => {
   const eligibleContacts = activeClientContacts.filter(c => isTest ? c.monthlyTestAlerts === true : normalizePriorities(c.priorities).some(p => priorityKey(p) === priorityKey(payload.priority)));
   if (!eligibleContacts.length) throw new Error(isTest ? 'None of the selected contacts are enabled for Monthly Test alerts.' : `None of the selected contacts are enabled for ${payload.priority} alerts.`);
 
-  const a = { ...payload, priorityLabel: currentPriorityConfig.label, priorityConfig: currentPriorityConfig, fromName: settings.fromName, testMonth: payload.testMonth || monthLabel() };
+  const a = { ...payload, priorityLabel: currentPriorityConfig.label, priorityConfig: currentPriorityConfig, fromName: settings.fromName, testMonth: payload.testMonth || monthLabel(), templateFields: mappedTemplateFields(currentIssue.fields, settings) };
   const templates = await getTemplates();
   const branding = await getBranding();
   const subject = buildEmailSubject(a, templates);
