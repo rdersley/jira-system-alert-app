@@ -1,6 +1,6 @@
 {
   "name": "system-alert-admin-custom-ui",
-  "version": "3.9.6",
+  "version": "3.9.5",
   "private": true,
   "type": "module",
   "scripts": {
