@@ -8,6 +8,12 @@
   <body>
     <div id="app"></div>
     <script type="module" src="/src/main.js"></script>
-    <script type="module" src="/src/setup-wizard.js"></script>
+    <script type="module">
+      // v3.9.6: load the setup wizard after the main admin screen so the
+      // wizard's setup-status refresh does not compete with the initial Jira load.
+      const loadSetupWizard = () => setTimeout(() => import('/src/setup-wizard.js'), 1200);
+      if (document.readyState === 'complete') loadSetupWizard();
+      else window.addEventListener('load', loadSetupWizard, { once: true });
+    </script>
   </body>
 </html>
