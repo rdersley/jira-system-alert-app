@@ -5,3 +5,11 @@ System Alert Manager v3.9.2 upgrade
 3. Run .\deploy-dev.ps1 from the app root.
 4. No new Forge scopes or egress entries are introduced by v3.9.2.
 5. Easy Connect requires vendor Forge environment variables MICROSOFT_MARKETPLACE_CLIENT_ID, MICROSOFT_MARKETPLACE_CLIENT_SECRET and MICROSOFT_MARKETPLACE_REDIRECT_URI before Connect can be used.
+
+
+v3.9.5 Microsoft 365 test:
+1. Select Communication Providers > Microsoft 365 > Enterprise manual.
+2. Enter Tenant ID, Application (Client) ID, Client Secret VALUE, optional secret expiry, sender mailbox, From name and Reply-to.
+3. Click Save & verify Microsoft 365.
+4. Enter a test recipient and click Send test email.
+5. Confirm the provider status shows Microsoft 365 connected and the test email arrives from the configured mailbox.

@@ -45,3 +45,13 @@ Run `./test-dev.ps1` for a no-deploy validation pass. It runs regression/safety 
 
 ### Mock provider mode (development only)
 Set the Forge environment variable `SYSTEM_ALERT_MOCK_PROVIDERS=true` in a development environment to prevent real SendGrid/Microsoft 365/Twilio sends while exercising the send workflow. Never enable this in production. Mock mode is opt-in and disabled by default.
+
+
+## v3.9.5 — Microsoft 365 Enterprise connection & testing
+
+- Added Save & verify Microsoft 365 for Enterprise manual configuration.
+- Verifies the client-credentials token and confirms the Mail.Send application role is present.
+- Shows verified sender, last verification and last successful test email.
+- Added optional client-secret expiry tracking and warning.
+- Test email updates the verified Microsoft connection state.
+- Client secrets continue to be stored only in encrypted Forge secret storage.

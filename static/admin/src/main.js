@@ -1,7 +1,7 @@
 import { invoke } from '@forge/bridge';
 import './styles.css';
 
-const APP_VERSION = '3.9.4';
+const APP_VERSION = '3.9.5';
 const app = document.querySelector('#app');
 
 const state = {
@@ -139,15 +139,27 @@ function render() {
             ${!microsoftMarketplace.available ? `<div class="notice-inline warning"><strong>Development connection not configured</strong><span>Customers no longer enter Microsoft IDs or secrets here. The publisher-side Microsoft application must be configured once before Easy Connect can perform a real Microsoft sign-in. SendGrid and Enterprise manual remain available while developing.</span></div>` : ''}
           </div>
           <div id="microsoftEnterpriseConfig" ${providerSettings.microsoftMode==='enterprise'?'':'hidden'}>
+            <div class="connection-status ${providerStatus.email?.connectionMode==='enterprise' && providerStatus.email?.connected?'ready':'pending'}">
+              <strong>${providerStatus.email?.connectionMode==='enterprise' && providerStatus.email?.connected?'✓ Microsoft 365 connection verified':'Microsoft 365 Enterprise connection not yet verified'}</strong>
+              <span>${providerStatus.email?.connectionMode==='enterprise' && providerStatus.email?.connected ? `Sender: ${esc(providerSettings.microsoftSenderMailbox || providerStatus.email?.from || '')}` : 'Save the Microsoft details below, then use Save & verify Microsoft 365.'}</span>
+              ${providerStatus.email?.connectionMode==='enterprise' && providerStatus.email?.verifiedAt ? `<span>Last verified: ${esc(formatLocalDateTime(providerStatus.email.verifiedAt))}</span>` : ''}
+              ${providerStatus.email?.connectionMode==='enterprise' && providerStatus.email?.testSentAt ? `<span>Last test email: ${esc(formatLocalDateTime(providerStatus.email.testSentAt))}</span>` : ''}
+              ${providerStatus.email?.secretExpiry ? `<span>Client secret expiry: ${esc(providerStatus.email.secretExpiry)}${Number.isFinite(providerStatus.email.secretExpiryDays) ? ` (${providerStatus.email.secretExpiryDays} day${providerStatus.email.secretExpiryDays===1?'':'s'} remaining)` : ''}</span>` : ''}
+              ${providerStatus.email?.secretExpiryWarning ? `<span><strong>${providerStatus.email?.secretExpired?'Client secret has expired.':'Client secret expires soon.'}</strong> Replace the secret before Microsoft 365 email stops.</span>` : ''}
+              ${providerStatus.email?.lastError ? `<span>Last error: ${esc(providerStatus.email.lastError)}</span>` : ''}
+            </div>
             ${field('microsoftTenantIdEnterprise','Tenant ID', providerSettings.microsoftTenantId || '', 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx')}
             ${field('microsoftClientId','Application (Client) ID', providerSettings.microsoftClientId || '', 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx')}
-            ${secretField('microsoftClientSecret','Client secret', providerSettings.microsoftMode==='enterprise' && providerStatus.email?.configured ? 'Configured — leave blank to keep current secret' : 'Paste client secret')}
+            ${secretField('microsoftClientSecret','Client secret VALUE', providerSettings.microsoftMode==='enterprise' && providerStatus.email?.source ? 'Configured — leave blank to keep current secret' : 'Paste client secret value')}
+            <p class="help">Use the client secret <b>Value</b>, not the Secret ID. The value is stored encrypted and is never displayed again.</p>
+            ${field('microsoftClientSecretExpiry','Client secret expiry (optional)', providerSettings.microsoftClientSecretExpiry || '', '', '', 'date')}
             ${field('microsoftSenderMailboxEnterprise','Sender mailbox', providerSettings.microsoftSenderMailbox || '', 'servicedesk@company.com','', 'email')}
             ${field('microsoftFromNameEnterprise','From name', providerSettings.microsoftFromName || settings.fromName || 'Service Desk', 'Service Desk')}
             ${field('microsoftReplyToEmailEnterprise','Reply-to email', providerSettings.microsoftReplyToEmail || providerSettings.microsoftSenderMailbox || '', 'servicedesk@company.com','', 'email')}
-            <div class="provider-guide"><strong>Enterprise IT request</strong><p>Use this only where the customer requires its own Entra application. IT creates the app registration, grants Microsoft Graph <b>Application → Mail.Send</b>, grants admin consent, and restricts the app to the approved sender mailbox.</p><textarea id="microsoftItRequest" rows="7" readonly>Request: System Alert Manager Microsoft 365 email access
+            <div class="easy-connect-actions"><button id="microsoftEnterpriseVerify" class="btn primary" type="button">Save & verify Microsoft 365</button>${providerStatus.email?.connectionMode==='enterprise' && providerStatus.email?.connected ? `<button id="microsoftEnterpriseDisconnect" class="btn secondary" type="button">Clear verification</button>` : ''}</div>
+            <div class="provider-guide"><strong>Enterprise security checklist</strong><p>The Microsoft app should use Graph <b>Application → Mail.Send</b> with admin consent and should be restricted to the approved sender mailbox using Exchange Online application access controls. System Alert Manager only needs the Tenant ID, Client ID, client secret value and sender mailbox.</p><textarea id="microsoftItRequest" rows="7" readonly>Request: System Alert Manager Microsoft 365 email access
 
-Please create an Entra application registration for System Alert Manager and grant Microsoft Graph Application permission Mail.Send with admin consent. Please restrict application access to the approved sender mailbox and provide the Tenant ID, Client ID and Client Secret.</textarea><button id="copyMicrosoftRequest" class="btn secondary small" type="button">Copy IT request</button></div>
+Please create an Entra application registration for System Alert Manager and grant Microsoft Graph Application permission Mail.Send with admin consent. Please restrict application access to the approved sender mailbox and provide the Tenant ID, Client ID, Client Secret VALUE, sender mailbox and secret expiry date.</textarea><button id="copyMicrosoftRequest" class="btn secondary small" type="button">Copy IT request</button></div>
           </div>
         </div>
         </div>
@@ -540,30 +552,45 @@ function bindEvents() {
   if (byId('copyMicrosoftRequest')) byId('copyMicrosoftRequest').onclick = async () => { try { await navigator.clipboard.writeText(byId('microsoftItRequest')?.value || ''); state.message='IT request copied.'; render(); } catch { state.error='Could not copy automatically. Select the IT request text and copy it manually.'; render(); } };
   if (byId('testEmailProvider')) byId('testEmailProvider').onclick = async () => { const recipient=getValue('testEmailRecipient'); if(!recipient){state.error='Enter a test email recipient.';return render();} await act(async()=>{ await invoke('testEmailProvider',{recipient}); state.message=`Test email sent to ${recipient}.`; render(); }); };
 
+  const collectProviderSettings = () => ({
+    emailProvider: document.querySelector('input[name="emailProvider"]:checked')?.value || 'sendgrid',
+    sendgridFromEmail: getValue('sendgridFromEmail'),
+    sendgridFromName: getValue('sendgridFromName'),
+    sendgridReplyToEmail: getValue('sendgridReplyToEmail'),
+    sendgridApiKey: getValue('sendgridApiKey'),
+    microsoftMode: document.querySelector('input[name="microsoftMode"]:checked')?.value || 'marketplace',
+    microsoftTenantId: (document.querySelector('input[name="microsoftMode"]:checked')?.value === 'enterprise' ? getValue('microsoftTenantIdEnterprise') : (providerSettings.microsoftTenantId || '')),
+    microsoftClientId: getValue('microsoftClientId'),
+    microsoftClientSecret: getValue('microsoftClientSecret'),
+    microsoftClientSecretExpiry: getValue('microsoftClientSecretExpiry'),
+    microsoftSenderMailbox: (document.querySelector('input[name="microsoftMode"]:checked')?.value === 'enterprise' ? getValue('microsoftSenderMailboxEnterprise') : (getValue('microsoftSenderMailbox') || providerSettings.microsoftSenderMailbox || '')),
+    microsoftFromName: (document.querySelector('input[name="microsoftMode"]:checked')?.value === 'enterprise' ? getValue('microsoftFromNameEnterprise') : (getValue('microsoftFromName') || providerSettings.microsoftFromName || settings.fromName || 'Service Desk')),
+    microsoftReplyToEmail: (document.querySelector('input[name="microsoftMode"]:checked')?.value === 'enterprise' ? getValue('microsoftReplyToEmailEnterprise') : (getValue('microsoftReplyToEmail') || providerSettings.microsoftReplyToEmail || '')),
+    twilioAccountSid: getValue('twilioAccountSid'),
+    twilioAuthToken: getValue('twilioAuthToken'),
+    twilioApiKey: getValue('twilioApiKey'),
+    twilioApiSecret: getValue('twilioApiSecret'),
+    twilioFromNumber: getValue('twilioFromNumber'),
+    twilioMessagingServiceSid: getValue('twilioMessagingServiceSid'),
+    twilioRegion: byId('twilioRegion')?.value || 'global'
+  });
+
+  if (byId('microsoftEnterpriseVerify')) byId('microsoftEnterpriseVerify').onclick = async () => {
+    await act(async()=>{
+      const payload=collectProviderSettings();
+      if(payload.microsoftMode!=='enterprise' || payload.emailProvider!=='microsoft365') throw new Error('Select Microsoft 365 and Enterprise manual first.');
+      await invoke('saveProviderSettings', payload);
+      await invoke('verifyMicrosoftEnterpriseConnection');
+      state.message='Microsoft 365 authentication verified. Send a test email below to confirm mailbox access.';
+      await load();
+    });
+  };
+  if (byId('microsoftEnterpriseDisconnect')) byId('microsoftEnterpriseDisconnect').onclick = async () => { await act(async()=>{ await invoke('disconnectMicrosoftEnterprise'); state.message='Microsoft 365 verification cleared. Saved credentials were retained.'; await load(); }); };
+
   if (byId('providerForm')) byId('providerForm').onsubmit = async e => {
     e.preventDefault();
     await act(async () => {
-      await invoke('saveProviderSettings', {
-        emailProvider: document.querySelector('input[name="emailProvider"]:checked')?.value || 'sendgrid',
-        sendgridFromEmail: getValue('sendgridFromEmail'),
-        sendgridFromName: getValue('sendgridFromName'),
-        sendgridReplyToEmail: getValue('sendgridReplyToEmail'),
-        sendgridApiKey: getValue('sendgridApiKey'),
-        microsoftMode: document.querySelector('input[name="microsoftMode"]:checked')?.value || 'marketplace',
-        microsoftTenantId: (document.querySelector('input[name="microsoftMode"]:checked')?.value === 'enterprise' ? getValue('microsoftTenantIdEnterprise') : (providerSettings.microsoftTenantId || '')),
-        microsoftClientId: getValue('microsoftClientId'),
-        microsoftClientSecret: getValue('microsoftClientSecret'),
-        microsoftSenderMailbox: (document.querySelector('input[name="microsoftMode"]:checked')?.value === 'enterprise' ? getValue('microsoftSenderMailboxEnterprise') : (getValue('microsoftSenderMailbox') || providerSettings.microsoftSenderMailbox || '')),
-        microsoftFromName: (document.querySelector('input[name="microsoftMode"]:checked')?.value === 'enterprise' ? getValue('microsoftFromNameEnterprise') : (getValue('microsoftFromName') || providerSettings.microsoftFromName || settings.fromName || 'Service Desk')),
-        microsoftReplyToEmail: (document.querySelector('input[name="microsoftMode"]:checked')?.value === 'enterprise' ? getValue('microsoftReplyToEmailEnterprise') : (getValue('microsoftReplyToEmail') || providerSettings.microsoftReplyToEmail || '')),
-        twilioAccountSid: getValue('twilioAccountSid'),
-        twilioAuthToken: getValue('twilioAuthToken'),
-        twilioApiKey: getValue('twilioApiKey'),
-        twilioApiSecret: getValue('twilioApiSecret'),
-        twilioFromNumber: getValue('twilioFromNumber'),
-        twilioMessagingServiceSid: getValue('twilioMessagingServiceSid'),
-        twilioRegion: byId('twilioRegion')?.value || 'global'
-      });
+      await invoke('saveProviderSettings', collectProviderSettings());
       state.message = 'Communication provider configuration saved.';
       await load();
     });

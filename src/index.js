@@ -20,7 +20,7 @@ const PROVIDER_SECRET_KEYS = {
   twilioApiSecret: 'system-alert:provider:twilio-api-secret',
   microsoftClientSecret: 'system-alert:provider:microsoft-client-secret'
 };
-const APP_VERSION = '3.9.4';
+const APP_VERSION = '3.9.5';
 
 const DEFAULT_SETTINGS = {
   clientFieldId: '',
@@ -52,6 +52,7 @@ const DEFAULT_PROVIDER_SETTINGS = {
   microsoftSenderMailbox: '',
   microsoftFromName: 'Service Desk',
   microsoftReplyToEmail: '',
+  microsoftClientSecretExpiry: '',
   smsProvider: 'twilio',
   twilioRegion: 'global',
   twilioFromNumber: '',
@@ -168,7 +169,9 @@ async function getMicrosoftConnectionState() {
 async function saveMicrosoftConnectionState(value = {}) {
   const next = {
     status: value.status === 'connected' ? 'connected' : 'disconnected',
+    mode: value.mode === 'enterprise' ? 'enterprise' : 'marketplace',
     tenantId: normalizeTextValue(value.tenantId),
+    clientId: normalizeTextValue(value.clientId),
     senderMailbox: normalizeTextValue(value.senderMailbox),
     verifiedAt: normalizeTextValue(value.verifiedAt),
     testSentAt: normalizeTextValue(value.testSentAt),
@@ -176,6 +179,15 @@ async function saveMicrosoftConnectionState(value = {}) {
   };
   await kvs.set(MICROSOFT_CONNECTION_KEY, next);
   return next;
+}
+
+function secretExpiryInfo(value='') {
+  const raw = normalizeTextValue(value);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return { date:'', days:null, warning:false, expired:false };
+  const end = new Date(`${raw}T23:59:59Z`);
+  if (Number.isNaN(end.getTime())) return { date:'', days:null, warning:false, expired:false };
+  const days = Math.ceil((end.getTime() - Date.now()) / 86400000);
+  return { date:raw, days, warning:days <= 60, expired:days < 0 };
 }
 
 function microsoftTokenRoles(token = '') {
@@ -431,20 +443,26 @@ async function providerStatus() {
   const marketplaceClientSecret = process.env.MICROSOFT_MARKETPLACE_CLIENT_SECRET || '';
   const marketplaceRedirectUri = process.env.MICROSOFT_MARKETPLACE_REDIRECT_URI || '';
   const msConnection = await getMicrosoftConnectionState();
-  const connectionMatches = msConnection.status === 'connected' &&
+  const marketplaceConnectionMatches = msConnection.status === 'connected' && msConnection.mode !== 'enterprise' &&
     normalizeTextValue(msConnection.tenantId) === normalizeTextValue(cfg.microsoftTenantId) &&
+    normalizeTextValue(msConnection.senderMailbox).toLowerCase() === normalizeTextValue(cfg.microsoftSenderMailbox).toLowerCase();
+  const enterpriseConnectionMatches = msConnection.status === 'connected' && msConnection.mode === 'enterprise' &&
+    normalizeTextValue(msConnection.tenantId) === normalizeTextValue(cfg.microsoftTenantId) &&
+    normalizeTextValue(msConnection.clientId) === normalizeTextValue(cfg.microsoftClientId) &&
     normalizeTextValue(msConnection.senderMailbox).toLowerCase() === normalizeTextValue(cfg.microsoftSenderMailbox).toLowerCase();
   const msCredentialsReady = msMode === 'marketplace'
     ? Boolean(marketplaceClientId && marketplaceClientSecret)
-    : Boolean(cfg.microsoftClientId && enterpriseSecret);
+    : Boolean(cfg.microsoftTenantId && cfg.microsoftClientId && cfg.microsoftSenderMailbox && enterpriseSecret);
   const msConfigured = msMode === 'marketplace'
-    ? Boolean(cfg.microsoftTenantId && cfg.microsoftSenderMailbox && msCredentialsReady && connectionMatches)
-    : Boolean(cfg.microsoftTenantId && cfg.microsoftSenderMailbox && msCredentialsReady);
+    ? Boolean(cfg.microsoftTenantId && cfg.microsoftSenderMailbox && msCredentialsReady && marketplaceConnectionMatches)
+    : Boolean(msCredentialsReady && enterpriseConnectionMatches);
+  const connected = msMode === 'marketplace' ? marketplaceConnectionMatches : enterpriseConnectionMatches;
+  const expiry = secretExpiryInfo(cfg.microsoftClientSecretExpiry);
   const twilioAccountSid = (await getProviderSecret('twilioAccountSid')) || process.env.TWILIO_ACCOUNT_SID || '';
   const twilioPassword = (await getProviderSecret('twilioApiSecret')) || (await getProviderSecret('twilioAuthToken')) || process.env.TWILIO_API_SECRET || process.env.TWILIO_AUTH_TOKEN || '';
   const twilioSender = cfg.twilioMessagingServiceSid || cfg.twilioFromNumber || process.env.TWILIO_MESSAGING_SERVICE_SID || process.env.TWILIO_FROM_NUMBER || '';
   const email = emailProvider === 'microsoft365'
-    ? { configured: msConfigured, provider: 'Microsoft 365', from: cfg.microsoftSenderMailbox || '', source: msMode === 'marketplace' ? (connectionMatches ? 'Easy Connect' : 'Easy Connect — consent required') : (enterpriseSecret ? 'Customer Entra application' : ''), connectionMode: msMode, marketplaceAvailable:Boolean(marketplaceClientId && marketplaceClientSecret), consentAvailable:Boolean(marketplaceClientId && marketplaceRedirectUri), connected: connectionMatches }
+    ? { configured: msConfigured, provider: 'Microsoft 365', from: cfg.microsoftSenderMailbox || '', source: msMode === 'marketplace' ? (marketplaceConnectionMatches ? 'Easy Connect' : 'Easy Connect — consent required') : (enterpriseSecret ? 'Customer Entra application' : ''), connectionMode: msMode, marketplaceAvailable:Boolean(marketplaceClientId && marketplaceClientSecret), consentAvailable:Boolean(marketplaceClientId && marketplaceRedirectUri), connected, verifiedAt: connected ? msConnection.verifiedAt || '' : '', testSentAt: connected ? msConnection.testSentAt || '' : '', lastError: msConnection.lastError || '', secretExpiry: expiry.date, secretExpiryDays: expiry.days, secretExpiryWarning: expiry.warning, secretExpired: expiry.expired }
     : { configured: Boolean(sendgridApiKey && sendgridFromEmail), provider: 'SendGrid', from: sendgridFromEmail, source: (await getProviderSecret('sendgridApiKey')) ? 'App settings' : (process.env.SENDGRID_API_KEY ? 'Forge environment' : '') };
   return {
     email,
@@ -525,6 +543,7 @@ resolver.define('saveSettings', async ({ payload }) => {
 
 resolver.define('saveProviderSettings', async ({ payload }) => {
   const current = await getProviderSettings();
+  const previousEnterpriseIdentity = `${normalizeTextValue(current.microsoftTenantId)}|${normalizeTextValue(current.microsoftClientId)}|${normalizeTextValue(current.microsoftSenderMailbox).toLowerCase()}`;
   const next = {
     ...current,
     emailProvider: payload?.emailProvider === 'microsoft365' ? 'microsoft365' : 'sendgrid',
@@ -537,6 +556,7 @@ resolver.define('saveProviderSettings', async ({ payload }) => {
     microsoftSenderMailbox: normalizeTextValue(payload?.microsoftSenderMailbox).slice(0,254),
     microsoftFromName: normalizeTextValue(payload?.microsoftFromName || 'Service Desk').slice(0,80),
     microsoftReplyToEmail: normalizeTextValue(payload?.microsoftReplyToEmail).slice(0,254),
+    microsoftClientSecretExpiry: /^\d{4}-\d{2}-\d{2}$/.test(normalizeTextValue(payload?.microsoftClientSecretExpiry)) ? normalizeTextValue(payload.microsoftClientSecretExpiry) : '',
     smsProvider: 'twilio',
     twilioRegion: ['global','us1','au1'].includes(normalizeTextValue(payload?.twilioRegion).toLowerCase()) ? normalizeTextValue(payload.twilioRegion).toLowerCase() : 'global',
     twilioFromNumber: normalizeTextValue(payload?.twilioFromNumber).slice(0,40),
@@ -546,6 +566,11 @@ resolver.define('saveProviderSettings', async ({ payload }) => {
   for (const name of Object.keys(PROVIDER_SECRET_KEYS)) {
     const value = normalizeTextValue(payload?.[name]);
     if (value) await kvs.setSecret(PROVIDER_SECRET_KEYS[name], value);
+  }
+  const nextEnterpriseIdentity = `${normalizeTextValue(next.microsoftTenantId)}|${normalizeTextValue(next.microsoftClientId)}|${normalizeTextValue(next.microsoftSenderMailbox).toLowerCase()}`;
+  if (next.microsoftMode === 'enterprise' && (previousEnterpriseIdentity !== nextEnterpriseIdentity || normalizeTextValue(payload?.microsoftClientSecret))) {
+    const connection = await getMicrosoftConnectionState();
+    if (connection.mode === 'enterprise') await kvs.delete(MICROSOFT_CONNECTION_KEY);
   }
   return { settings: next, status: await providerStatus(), microsoftMarketplace: await microsoftMarketplaceSetup(next) };
 });
@@ -612,6 +637,34 @@ resolver.define('disconnectMicrosoftMarketplace', async () => {
   return { ok:true, microsoftMarketplace: await microsoftMarketplaceSetup(), status: await providerStatus() };
 });
 
+
+resolver.define('verifyMicrosoftEnterpriseConnection', async () => {
+  const cfg = await getProviderSettings();
+  if (cfg.emailProvider !== 'microsoft365' || cfg.microsoftMode !== 'enterprise') throw new Error('Select Microsoft 365 and Enterprise manual first.');
+  if (!normalizeTextValue(cfg.microsoftTenantId) || !normalizeTextValue(cfg.microsoftClientId) || !normalizeTextValue(cfg.microsoftSenderMailbox)) throw new Error('Save the Tenant ID, Client ID and sender mailbox first.');
+  if (!(await getProviderSecret('microsoftClientSecret'))) throw new Error('Save the Microsoft Client Secret value first.');
+  try {
+    const token = await getMicrosoftAccessToken(cfg);
+    const roles = microsoftTokenRoles(token);
+    if (!roles.includes('Mail.Send')) throw new Error('Microsoft authentication succeeded, but the access token does not contain the Mail.Send application permission. Ask your Microsoft administrator to confirm Application → Mail.Send has admin consent.');
+    const previous = await getMicrosoftConnectionState();
+    await saveMicrosoftConnectionState({
+      status:'connected', mode:'enterprise', tenantId:cfg.microsoftTenantId, clientId:cfg.microsoftClientId,
+      senderMailbox:cfg.microsoftSenderMailbox, verifiedAt:new Date().toISOString(), testSentAt:previous.testSentAt || '', lastError:''
+    });
+    return { ok:true, status:await providerStatus() };
+  } catch (e) {
+    await saveMicrosoftConnectionState({ status:'disconnected', mode:'enterprise', tenantId:cfg.microsoftTenantId, clientId:cfg.microsoftClientId, senderMailbox:cfg.microsoftSenderMailbox, lastError:e?.message || String(e) });
+    throw e;
+  }
+});
+
+resolver.define('disconnectMicrosoftEnterprise', async () => {
+  const current = await getMicrosoftConnectionState();
+  if (current.mode === 'enterprise') await kvs.delete(MICROSOFT_CONNECTION_KEY);
+  return { ok:true, status:await providerStatus() };
+});
+
 resolver.define('testEmailProvider', async ({ payload }) => {
   const to = normalizeTextValue(payload?.recipient);
   if (!to || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to)) throw new Error('Enter a valid test recipient email address.');
@@ -621,9 +674,9 @@ resolver.define('testEmailProvider', async ({ payload }) => {
   const templates = await getTemplates();
   await sendEmail([to], 'TEST ONLY | System Alert Manager email configuration', buildEmailHtml(a, templates, branding), buildEmailText(a, templates), settings.fromName, settings.replyToEmail, branding);
   const cfg = await getProviderSettings();
-  if (cfg.emailProvider === 'microsoft365' && cfg.microsoftMode !== 'enterprise') {
+  if (cfg.emailProvider === 'microsoft365') {
     const previous = await getMicrosoftConnectionState();
-    await saveMicrosoftConnectionState({ status:'connected', tenantId:cfg.microsoftTenantId, senderMailbox:cfg.microsoftSenderMailbox, verifiedAt:previous.verifiedAt || new Date().toISOString(), testSentAt:new Date().toISOString(), lastError:'' });
+    await saveMicrosoftConnectionState({ status:'connected', mode:cfg.microsoftMode === 'enterprise' ? 'enterprise' : 'marketplace', tenantId:cfg.microsoftTenantId, clientId:cfg.microsoftClientId, senderMailbox:cfg.microsoftSenderMailbox, verifiedAt:previous.verifiedAt || new Date().toISOString(), testSentAt:new Date().toISOString(), lastError:'' });
   }
   return { ok:true };
 });
