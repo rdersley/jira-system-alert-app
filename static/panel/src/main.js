@@ -1,7 +1,7 @@
 import { invoke, view, Modal } from '@forge/bridge';
 import './styles.css';
 
-const APP_VERSION = '3.8.0';
+const APP_VERSION = '3.9.4';
 const app = document.querySelector('#app');
 let state = { context: null, data: null, error: '', loading: true };
 

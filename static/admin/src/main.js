@@ -1,7 +1,7 @@
 import { invoke } from '@forge/bridge';
 import './styles.css';
 
-const APP_VERSION = '3.8.0';
+const APP_VERSION = '3.9.4';
 const app = document.querySelector('#app');
 
 const state = {
@@ -28,13 +28,19 @@ function maskEmail(email='') {
   return `${email.slice(0,1)}••••${email.slice(at)}`;
 }
 
+function formatLocalDateTime(value='') {
+  if (!value) return '';
+  try { return new Intl.DateTimeFormat('en-IE', { dateStyle:'medium', timeStyle:'short' }).format(new Date(value)); }
+  catch { return value; }
+}
+
 function renderLoading() {
   app.innerHTML = `<div class="page"><div class="loading"><span class="spinner"></span> Loading System Alert contacts…</div></div>`;
 }
 
 function render() {
   if (!state.data) return renderLoading();
-  const { settings = {}, contacts = [], clientOptions = [], jiraFields = [], providerStatus = {}, providerSettings = {}, templates = {}, branding = {}, setupStatus = {} } = state.data;
+  const { settings = {}, contacts = [], clientOptions = [], jiraFields = [], jiraProjects = [], providerStatus = {}, providerSettings = {}, microsoftMarketplace = {}, templates = {}, branding = {}, setupStatus = {} } = state.data;
   const editing = state.editingId ? contacts.find(c => c.id === state.editingId) : null;
   const c = editing || {};
   const active = state.activeSection || 'general';
@@ -74,11 +80,11 @@ function render() {
     <section class="card">
       <div class="card-head"><div><h2>App settings</h2><p>Choose the Jira project and priorities that can use System Alert. These Jira fields pre-fill the alert.</p></div></div>
       <form id="settingsForm" class="card-body form-grid">
-        ${jiraFieldSelect('clientFieldId','Client Jira field', settings.clientFieldId || '', jiraFields, 'Select the Jira field that identifies the client.')}
-        ${jiraFieldSelect('issueStartFieldId','Issue Start Time field', settings.issueStartFieldId || '', jiraFields, 'Select the date/time field used for the incident start.', true)}
-        ${jiraFieldSelect('nextUpdateFieldId','Next Update Due field', settings.nextUpdateFieldId || '', jiraFields, 'Select the date/time field used for the next customer update.', true)}
-        <div class="field wide"><label>Additional incident fields</label><p class="help">Optional Jira fields can be exposed to templates. Each mapping creates a token such as <code>{{field.impact}}</code>.</p><div id="optionalFieldRows" class="optional-field-list">${renderOptionalFieldRows(settings.optionalFieldMappings || [], jiraFields)}</div><button id="addOptionalField" class="btn secondary small" type="button">+ Add incident field</button></div>
-        ${field('allowedProjectKey','Allowed project', settings.allowedProjectKey || 'SD', 'SD')}
+        ${projectSelect('allowedProjectKey','Jira project', settings.allowedProjectKey || '', jiraProjects, 'Choose the Jira/JSM project where System Alert should be available.')}
+        ${jiraFieldSelect('clientFieldId','Client / Customer field', settings.clientFieldId || '', jiraFields, 'Required. This field identifies the client and keeps recipient lists isolated.')}
+        ${jiraFieldSelect('issueStartFieldId','Issue Start Time mapping (optional)', settings.issueStartFieldId || '', jiraFields, 'Optional. Leave as Manual entry only if this Jira site has no incident-start field.', true, 'Manual entry only')}
+        ${jiraFieldSelect('nextUpdateFieldId','Next Update Due mapping (optional)', settings.nextUpdateFieldId || '', jiraFields, 'Optional. Leave as Manual entry only if agents will enter the next update time in System Alert.', true, 'Manual entry only')}
+        <div class="field wide"><label>Additional incident fields</label><p class="help">Optional Jira fields can be exposed to templates. Each mapping creates a token such as <code>{{field.impact}}</code>. Nothing here is required.</p><div id="optionalFieldRows" class="optional-field-list">${renderOptionalFieldRows(settings.optionalFieldMappings || [], jiraFields)}</div><button id="addOptionalField" class="btn secondary small" type="button">+ Add incident field</button></div>
         ${field('fromName','Sender display name', settings.fromName || 'Service Desk', 'Service Desk')}
         ${field('replyToEmail','Reply-to email', settings.replyToEmail || '', 'servicedesk@example.com','', 'email')}
         <div class="field wide"><label>System Alert priorities</label><p class="help">Add the Jira priority names that should show the System Alert button. Names must match Jira exactly. You can also set the label and colour used in notifications.</p><div id="priorityConfigRows" class="priority-config-list">${renderPriorityConfigRows(settings.priorityConfigs || [])}</div><button id="addPriority" class="btn secondary small" type="button">+ Add priority</button></div>
@@ -101,21 +107,49 @@ function render() {
             <label class="provider-option"><input type="radio" name="emailProvider" value="microsoft365" ${providerSettings.emailProvider==='microsoft365'?'checked':''}><span><strong>Microsoft 365</strong><small>Existing mailbox via Microsoft Graph</small></span></label>
           </div>
         </div>
-        <div id="sendgridConfig" class="provider-config-block" style="display:${providerSettings.emailProvider==='microsoft365'?'none':'block'}"><h3>Email · SendGrid</h3><p class="help">Existing Forge environment variables remain supported. Enter a secret only when adding or replacing it.</p>
+        <div id="sendgridConfig" class="provider-config-block" ${providerSettings.emailProvider==='microsoft365'?'hidden':''}><h3>Email · SendGrid</h3><p class="help">Existing Forge environment variables remain supported. Enter a secret only when adding or replacing it.</p>
           ${field('sendgridFromEmail','From email', providerSettings.sendgridFromEmail || (providerSettings.emailProvider!=='microsoft365'?providerStatus.email?.from:'') || '', 'servicedesk@example.com','', 'email')}
           ${field('sendgridFromName','From name', providerSettings.sendgridFromName || settings.fromName || 'Service Desk', 'Service Desk')}
           ${field('sendgridReplyToEmail','Reply-to email', providerSettings.sendgridReplyToEmail || settings.replyToEmail || '', 'servicedesk@example.com','', 'email')}
           ${secretField('sendgridApiKey','SendGrid API key', providerSettings.emailProvider!=='microsoft365' && providerStatus.email?.configured ? 'Configured — leave blank to keep current key' : 'SG.xxxxx')}
           <div class="provider-guide"><strong>Quick setup</strong><ol><li>Create or use a SendGrid account.</li><li>Verify a sender address or authenticate the company domain.</li><li>Create an API key with Mail Send permission.</li><li>Paste the key here and send a test email below.</li></ol></div>
         </div>
-        <div id="microsoftConfig" class="provider-config-block" style="display:${providerSettings.emailProvider==='microsoft365'?'block':'none'}"><h3>Email · Microsoft 365</h3><p class="help">Use the organisation's existing mailbox. Your Microsoft administrator only needs to provide the Entra application details once.</p>
-          ${field('microsoftTenantId','Tenant ID', providerSettings.microsoftTenantId || '', 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx')}
-          ${field('microsoftClientId','Application (Client) ID', providerSettings.microsoftClientId || '', 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx')}
-          ${secretField('microsoftClientSecret','Client secret', providerSettings.emailProvider==='microsoft365' && providerStatus.email?.configured ? 'Configured — leave blank to keep current secret' : 'Paste client secret')}
-          ${field('microsoftSenderMailbox','Sender mailbox', providerSettings.microsoftSenderMailbox || '', 'servicedesk@company.com','', 'email')}
-          ${field('microsoftFromName','From name', providerSettings.microsoftFromName || settings.fromName || 'Service Desk', 'Service Desk')}
-          ${field('microsoftReplyToEmail','Reply-to email', providerSettings.microsoftReplyToEmail || providerSettings.microsoftSenderMailbox || '', 'servicedesk@company.com','', 'email')}
-          <div class="provider-guide"><strong>Microsoft IT request</strong><p>Ask Microsoft 365 IT to create an Entra app registration, grant Microsoft Graph <b>Application → Mail.Send</b>, grant admin consent, and restrict the app to the required sender mailbox. Then enter the Tenant ID, Client ID and Client Secret above.</p><textarea id="microsoftItRequest" rows="7" readonly>Request: System Alert Manager Microsoft 365 email access\n\nPlease create an Entra application registration for System Alert Manager and grant Microsoft Graph Application permission Mail.Send with admin consent. Please restrict application access to the sender mailbox only where possible.\n\nPlease provide: Tenant ID, Application (Client) ID and Client Secret. No Mail.Read or Mail.ReadWrite permission is required.</textarea><button id="copyMicrosoftRequest" class="btn secondary small" type="button">Copy IT request</button></div>
+        <div id="microsoftConfig" class="provider-config-block" ${providerSettings.emailProvider==='microsoft365'?'':'hidden'}><h3>Email · Microsoft 365</h3><p class="help">Choose the simplest Microsoft connection available for the organisation.</p>
+          <div class="provider-choice microsoft-mode-choice">
+            <label class="provider-option"><input type="radio" name="microsoftMode" value="marketplace" ${providerSettings.microsoftMode!=='enterprise'?'checked':''}><span><strong>Easy Connect</strong><small>Use the System Alert Marketplace Microsoft application</small></span></label>
+            <label class="provider-option"><input type="radio" name="microsoftMode" value="enterprise" ${providerSettings.microsoftMode==='enterprise'?'checked':''}><span><strong>Enterprise manual</strong><small>Use the customer's own Entra application</small></span></label>
+          </div>
+          <div id="microsoftMarketplaceConfig" ${providerSettings.microsoftMode==='enterprise'?'hidden':''}>
+            <div class="provider-guide easy-connect-guide">
+              <strong>Microsoft 365 Easy Connect</strong>
+              <p>Connect System Alert Manager to Microsoft 365 without entering Tenant IDs, Client IDs or client secrets. Microsoft identifies the organisation during the connection flow.</p>
+              <div class="connection-status ${microsoftMarketplace.connected?'ready':(microsoftMarketplace.available?'pending':'unavailable')}">
+                <strong>${microsoftMarketplace.connected?'✓ Connected to Microsoft 365':(microsoftMarketplace.available?'Ready to connect Microsoft 365':'Easy Connect not enabled in this environment')}</strong>
+                <span>${esc(microsoftMarketplace.message || '')}</span>
+                ${microsoftMarketplace.connected && microsoftMarketplace.organisationName ? `<span>Organisation: ${esc(microsoftMarketplace.organisationName)}</span>` : ''}
+                ${microsoftMarketplace.connected && microsoftMarketplace.senderMailbox ? `<span>Sender: ${esc(microsoftMarketplace.senderMailbox)}</span>` : ''}
+                ${microsoftMarketplace.connected && microsoftMarketplace.verifiedAt ? `<span>Verified: ${esc(formatLocalDateTime(microsoftMarketplace.verifiedAt))}</span>` : ''}
+              </div>
+            </div>
+            <div class="easy-connect-actions">
+              <button id="microsoftConnect" class="btn primary" type="button" ${microsoftMarketplace.available?'':'disabled'}>${microsoftMarketplace.connected?'Reconnect Microsoft 365':'Connect Microsoft 365'}</button>
+              ${microsoftMarketplace.connected ? `<button id="microsoftDisconnect" class="btn secondary" type="button">Disconnect</button>` : ''}
+            </div>
+            ${microsoftMarketplace.connected ? `${field('microsoftSenderMailbox','Sender mailbox', providerSettings.microsoftSenderMailbox || microsoftMarketplace.senderMailbox || '', 'servicedesk@company.com','', 'email')}${field('microsoftFromName','From name', providerSettings.microsoftFromName || settings.fromName || 'Service Desk', 'Service Desk')}${field('microsoftReplyToEmail','Reply-to email', providerSettings.microsoftReplyToEmail || providerSettings.microsoftSenderMailbox || '', 'servicedesk@company.com','', 'email')}` : ''}
+            ${!microsoftMarketplace.available ? `<div class="notice-inline warning"><strong>Development connection not configured</strong><span>Customers no longer enter Microsoft IDs or secrets here. The publisher-side Microsoft application must be configured once before Easy Connect can perform a real Microsoft sign-in. SendGrid and Enterprise manual remain available while developing.</span></div>` : ''}
+          </div>
+          <div id="microsoftEnterpriseConfig" ${providerSettings.microsoftMode==='enterprise'?'':'hidden'}>
+            ${field('microsoftTenantIdEnterprise','Tenant ID', providerSettings.microsoftTenantId || '', 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx')}
+            ${field('microsoftClientId','Application (Client) ID', providerSettings.microsoftClientId || '', 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx')}
+            ${secretField('microsoftClientSecret','Client secret', providerSettings.microsoftMode==='enterprise' && providerStatus.email?.configured ? 'Configured — leave blank to keep current secret' : 'Paste client secret')}
+            ${field('microsoftSenderMailboxEnterprise','Sender mailbox', providerSettings.microsoftSenderMailbox || '', 'servicedesk@company.com','', 'email')}
+            ${field('microsoftFromNameEnterprise','From name', providerSettings.microsoftFromName || settings.fromName || 'Service Desk', 'Service Desk')}
+            ${field('microsoftReplyToEmailEnterprise','Reply-to email', providerSettings.microsoftReplyToEmail || providerSettings.microsoftSenderMailbox || '', 'servicedesk@company.com','', 'email')}
+            <div class="provider-guide"><strong>Enterprise IT request</strong><p>Use this only where the customer requires its own Entra application. IT creates the app registration, grants Microsoft Graph <b>Application → Mail.Send</b>, grants admin consent, and restricts the app to the approved sender mailbox.</p><textarea id="microsoftItRequest" rows="7" readonly>Request: System Alert Manager Microsoft 365 email access
+
+Please create an Entra application registration for System Alert Manager and grant Microsoft Graph Application permission Mail.Send with admin consent. Please restrict application access to the approved sender mailbox and provide the Tenant ID, Client ID and Client Secret.</textarea><button id="copyMicrosoftRequest" class="btn secondary small" type="button">Copy IT request</button></div>
+          </div>
+        </div>
         </div>
         <div class="provider-config-block"><h3>SMS · Twilio</h3><p class="help">Use either a From number or Messaging Service SID. Existing Forge variables remain supported.</p>
           ${secretField('twilioAccountSid','Account SID', providerStatus.sms?.configured ? 'Configured — leave blank to keep current SID' : 'ACxxxxxxxx')}
@@ -369,14 +403,25 @@ function bindOptionalFieldButtons() {
   document.querySelectorAll('.remove-optional-field').forEach(btn=>btn.onclick=()=>{btn.closest('[data-optional-field-row]')?.remove(); if(!document.querySelector('[data-optional-field-row]')) byId('optionalFieldRows').innerHTML='<div class="optional-field-empty">No additional incident fields configured.</div>';});
 }
 
-function jiraFieldSelect(id, label, value, fields, help='', dateOnly=false) {
+function jiraFieldSelect(id, label, value, fields, help='', dateOnly=false, emptyLabel='Select a Jira field…') {
   let list = Array.isArray(fields) ? fields : [];
   if (dateOnly) list = list.filter(f => ['date','datetime'].includes(String(f.schemaType || '').toLowerCase()));
   const selectedExists = list.some(f => f.id === value);
   const options = [
-    '<option value="">Select a Jira field…</option>',
+    `<option value="">${esc(emptyLabel)}</option>`,
     ...(!selectedExists && value ? [`<option value="${esc(value)}" selected>${esc(value)} (currently configured)</option>`] : []),
     ...list.map(f => `<option value="${esc(f.id)}" ${f.id===value?'selected':''}>${esc(f.name)}${f.custom ? ' — Custom field' : ''}</option>`)
+  ].join('');
+  return `<div class="field"><label for="${id}">${esc(label)}</label><select id="${id}" name="${id}">${options}</select>${help ? `<p class="help">${esc(help)}</p>` : ''}</div>`;
+}
+
+function projectSelect(id, label, value, projects, help='') {
+  const list = Array.isArray(projects) ? projects : [];
+  const selectedExists = list.some(p => p.key === value);
+  const options = [
+    '<option value="">Select a Jira project…</option>',
+    ...(!selectedExists && value ? [`<option value="${esc(value)}" selected>${esc(value)} (currently configured)</option>`] : []),
+    ...list.map(p => `<option value="${esc(p.key)}" ${p.key===value?'selected':''}>${esc(p.name)} (${esc(p.key)})</option>`)
   ].join('');
   return `<div class="field"><label for="${id}">${esc(label)}</label><select id="${id}" name="${id}">${options}</select>${help ? `<p class="help">${esc(help)}</p>` : ''}</div>`;
 }
@@ -479,7 +524,19 @@ function bindEvents() {
   };
   bindPriorityRowButtons();
 
-  document.querySelectorAll('input[name="emailProvider"]').forEach(r=>r.onchange=()=>{const ms=r.value==='microsoft365'&&r.checked; const sg=byId('sendgridConfig'), mc=byId('microsoftConfig'); if(sg)sg.style.display=ms?'none':'block'; if(mc)mc.style.display=ms?'block':'none';});
+  document.querySelectorAll('input[name="emailProvider"]').forEach(r=>r.onchange=()=>{const ms=r.value==='microsoft365'&&r.checked; const sg=byId('sendgridConfig'), mc=byId('microsoftConfig'); if(sg)sg.hidden=ms; if(mc)mc.hidden=!ms;});
+  document.querySelectorAll('input[name="microsoftMode"]').forEach(r=>r.onchange=()=>{ if(!r.checked)return; const easy=byId('microsoftMarketplaceConfig'), ent=byId('microsoftEnterpriseConfig'); if(easy)easy.hidden=r.value==='enterprise'; if(ent)ent.hidden=r.value!=='enterprise'; });
+  if (byId('microsoftConnect')) byId('microsoftConnect').onclick = async () => {
+    await act(async()=>{
+      const result = await invoke('startMicrosoftMarketplaceConnection');
+      const url = result?.consentUrl;
+      if (!url) throw new Error(result?.message || 'Microsoft 365 Easy Connect is not available in this environment yet.');
+      window.open(url,'_blank','noopener,noreferrer');
+      state.message='Microsoft connection opened in a new tab. Complete the Microsoft flow, then return here.';
+      render();
+    });
+  };
+  if (byId('microsoftDisconnect')) byId('microsoftDisconnect').onclick = async () => { if(!confirm('Disconnect this Microsoft 365 Easy Connect configuration? The tenant and mailbox values will be retained.'))return; await act(async()=>{ await invoke('disconnectMicrosoftMarketplace'); state.message='Microsoft 365 Easy Connect disconnected.'; await load(); }); };
   if (byId('copyMicrosoftRequest')) byId('copyMicrosoftRequest').onclick = async () => { try { await navigator.clipboard.writeText(byId('microsoftItRequest')?.value || ''); state.message='IT request copied.'; render(); } catch { state.error='Could not copy automatically. Select the IT request text and copy it manually.'; render(); } };
   if (byId('testEmailProvider')) byId('testEmailProvider').onclick = async () => { const recipient=getValue('testEmailRecipient'); if(!recipient){state.error='Enter a test email recipient.';return render();} await act(async()=>{ await invoke('testEmailProvider',{recipient}); state.message=`Test email sent to ${recipient}.`; render(); }); };
 
@@ -492,12 +549,13 @@ function bindEvents() {
         sendgridFromName: getValue('sendgridFromName'),
         sendgridReplyToEmail: getValue('sendgridReplyToEmail'),
         sendgridApiKey: getValue('sendgridApiKey'),
-        microsoftTenantId: getValue('microsoftTenantId'),
+        microsoftMode: document.querySelector('input[name="microsoftMode"]:checked')?.value || 'marketplace',
+        microsoftTenantId: (document.querySelector('input[name="microsoftMode"]:checked')?.value === 'enterprise' ? getValue('microsoftTenantIdEnterprise') : (providerSettings.microsoftTenantId || '')),
         microsoftClientId: getValue('microsoftClientId'),
         microsoftClientSecret: getValue('microsoftClientSecret'),
-        microsoftSenderMailbox: getValue('microsoftSenderMailbox'),
-        microsoftFromName: getValue('microsoftFromName'),
-        microsoftReplyToEmail: getValue('microsoftReplyToEmail'),
+        microsoftSenderMailbox: (document.querySelector('input[name="microsoftMode"]:checked')?.value === 'enterprise' ? getValue('microsoftSenderMailboxEnterprise') : (getValue('microsoftSenderMailbox') || providerSettings.microsoftSenderMailbox || '')),
+        microsoftFromName: (document.querySelector('input[name="microsoftMode"]:checked')?.value === 'enterprise' ? getValue('microsoftFromNameEnterprise') : (getValue('microsoftFromName') || providerSettings.microsoftFromName || settings.fromName || 'Service Desk')),
+        microsoftReplyToEmail: (document.querySelector('input[name="microsoftMode"]:checked')?.value === 'enterprise' ? getValue('microsoftReplyToEmailEnterprise') : (getValue('microsoftReplyToEmail') || providerSettings.microsoftReplyToEmail || '')),
         twilioAccountSid: getValue('twilioAccountSid'),
         twilioAuthToken: getValue('twilioAuthToken'),
         twilioApiKey: getValue('twilioApiKey'),
@@ -540,9 +598,10 @@ function bindEvents() {
       const current = state.data.settings || {};
       await invoke('saveSettings', {
         clientFieldId: current.clientFieldId || '',
-        issueStartFieldId: current.issueStartFieldId || 'customfield_10786',
-        nextUpdateFieldId: current.nextUpdateFieldId || 'customfield_10788',
-        allowedProjectKey: current.allowedProjectKey || 'SD',
+        issueStartFieldId: current.issueStartFieldId || '',
+        nextUpdateFieldId: current.nextUpdateFieldId || '',
+        optionalFieldMappings: current.optionalFieldMappings || [],
+        allowedProjectKey: current.allowedProjectKey || '',
         fromName: current.fromName || 'Service Desk',
         replyToEmail: current.replyToEmail || '',
         priorityConfigs: current.priorityConfigs || [],

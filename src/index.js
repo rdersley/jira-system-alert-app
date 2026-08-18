@@ -10,6 +10,7 @@ const DISPLAY_PROPERTY_KEY = 'system-alert-display';
 const PROVIDER_SETTINGS_KEY = 'system-alert:providers';
 const TEMPLATE_SETTINGS_KEY = 'system-alert:templates';
 const BRANDING_SETTINGS_KEY = 'system-alert:branding';
+const MICROSOFT_CONNECTION_KEY = 'system-alert:microsoft:connection';
 const MAX_LOGO_DATA_LENGTH = 200000;
 const PROVIDER_SECRET_KEYS = {
   sendgridApiKey: 'system-alert:provider:sendgrid-api-key',
@@ -19,12 +20,12 @@ const PROVIDER_SECRET_KEYS = {
   twilioApiSecret: 'system-alert:provider:twilio-api-secret',
   microsoftClientSecret: 'system-alert:provider:microsoft-client-secret'
 };
-const APP_VERSION = '3.8.0';
+const APP_VERSION = '3.9.4';
 
 const DEFAULT_SETTINGS = {
   clientFieldId: '',
-  issueStartFieldId: 'customfield_10786',
-  nextUpdateFieldId: 'customfield_10788',
+  issueStartFieldId: '',
+  nextUpdateFieldId: '',
   allowedProjectKey: 'SD',
   priorityConfigs: [
     { name: 'P1', label: 'P1', color: '#AE2E24' },
@@ -42,6 +43,7 @@ const DEFAULT_SETTINGS = {
 
 const DEFAULT_PROVIDER_SETTINGS = {
   emailProvider: 'sendgrid',
+  microsoftMode: 'marketplace',
   sendgridFromEmail: '',
   sendgridFromName: 'Service Desk',
   sendgridReplyToEmail: '',
@@ -156,6 +158,37 @@ async function getTemplates() {
 
 async function getBranding() {
   return { ...DEFAULT_BRANDING, ...((await kvs.get(BRANDING_SETTINGS_KEY)) || {}) };
+}
+
+
+async function getMicrosoftConnectionState() {
+  return (await kvs.get(MICROSOFT_CONNECTION_KEY)) || { status: 'disconnected' };
+}
+
+async function saveMicrosoftConnectionState(value = {}) {
+  const next = {
+    status: value.status === 'connected' ? 'connected' : 'disconnected',
+    tenantId: normalizeTextValue(value.tenantId),
+    senderMailbox: normalizeTextValue(value.senderMailbox),
+    verifiedAt: normalizeTextValue(value.verifiedAt),
+    testSentAt: normalizeTextValue(value.testSentAt),
+    lastError: normalizeTextValue(value.lastError).slice(0, 500)
+  };
+  await kvs.set(MICROSOFT_CONNECTION_KEY, next);
+  return next;
+}
+
+function microsoftTokenRoles(token = '') {
+  try {
+    const part = String(token).split('.')[1];
+    if (!part) return [];
+    const normalized = part.replace(/-/g, '+').replace(/_/g, '/');
+    const padded = normalized + '='.repeat((4 - normalized.length % 4) % 4);
+    const payload = JSON.parse(Buffer.from(padded, 'base64').toString('utf8'));
+    return Array.isArray(payload.roles) ? payload.roles : [];
+  } catch {
+    return [];
+  }
 }
 
 function normalizeHexColor(value, fallback) {
@@ -345,6 +378,25 @@ async function getJiraFields() {
   })).filter(f => f.id && f.name).sort((a,b) => a.name.localeCompare(b.name));
 }
 
+async function getJiraProjects() {
+  const projects = [];
+  let startAt = 0;
+  while (true) {
+    const res = await api.asUser().requestJira(route`/rest/api/3/project/search?startAt=${startAt}&maxResults=100&orderBy=name`);
+    if (!res.ok) throw new Error(`Could not read Jira projects (${res.status}).`);
+    const page = await res.json();
+    for (const p of page.values || []) {
+      const key = normalizeTextValue(p.key);
+      const name = normalizeTextValue(p.name);
+      if (key && !projects.some(x => x.key === key)) projects.push({ id:String(p.id || ''), key, name:name || key });
+    }
+    const values = page.values || [];
+    if (page.isLast || !values.length || startAt + values.length >= Number(page.total || 0)) break;
+    startAt += values.length;
+  }
+  return projects.sort((a,b) => a.name.localeCompare(b.name));
+}
+
 async function getClientOptions(fieldId) {
   if (!fieldId) return [];
   const contextsRes = await api.asUser().requestJira(route`/rest/api/3/field/${fieldId}/context?maxResults=100`);
@@ -373,13 +425,26 @@ async function providerStatus() {
   const emailProvider = cfg.emailProvider === 'microsoft365' ? 'microsoft365' : 'sendgrid';
   const sendgridApiKey = (await getProviderSecret('sendgridApiKey')) || process.env.SENDGRID_API_KEY || '';
   const sendgridFromEmail = cfg.sendgridFromEmail || process.env.ALERT_FROM_EMAIL || '';
-  const msSecret = await getProviderSecret('microsoftClientSecret');
-  const msConfigured = Boolean(cfg.microsoftTenantId && cfg.microsoftClientId && msSecret && cfg.microsoftSenderMailbox);
+  const msMode = cfg.microsoftMode === 'enterprise' ? 'enterprise' : 'marketplace';
+  const enterpriseSecret = await getProviderSecret('microsoftClientSecret');
+  const marketplaceClientId = process.env.MICROSOFT_MARKETPLACE_CLIENT_ID || '';
+  const marketplaceClientSecret = process.env.MICROSOFT_MARKETPLACE_CLIENT_SECRET || '';
+  const marketplaceRedirectUri = process.env.MICROSOFT_MARKETPLACE_REDIRECT_URI || '';
+  const msConnection = await getMicrosoftConnectionState();
+  const connectionMatches = msConnection.status === 'connected' &&
+    normalizeTextValue(msConnection.tenantId) === normalizeTextValue(cfg.microsoftTenantId) &&
+    normalizeTextValue(msConnection.senderMailbox).toLowerCase() === normalizeTextValue(cfg.microsoftSenderMailbox).toLowerCase();
+  const msCredentialsReady = msMode === 'marketplace'
+    ? Boolean(marketplaceClientId && marketplaceClientSecret)
+    : Boolean(cfg.microsoftClientId && enterpriseSecret);
+  const msConfigured = msMode === 'marketplace'
+    ? Boolean(cfg.microsoftTenantId && cfg.microsoftSenderMailbox && msCredentialsReady && connectionMatches)
+    : Boolean(cfg.microsoftTenantId && cfg.microsoftSenderMailbox && msCredentialsReady);
   const twilioAccountSid = (await getProviderSecret('twilioAccountSid')) || process.env.TWILIO_ACCOUNT_SID || '';
   const twilioPassword = (await getProviderSecret('twilioApiSecret')) || (await getProviderSecret('twilioAuthToken')) || process.env.TWILIO_API_SECRET || process.env.TWILIO_AUTH_TOKEN || '';
   const twilioSender = cfg.twilioMessagingServiceSid || cfg.twilioFromNumber || process.env.TWILIO_MESSAGING_SERVICE_SID || process.env.TWILIO_FROM_NUMBER || '';
   const email = emailProvider === 'microsoft365'
-    ? { configured: msConfigured, provider: 'Microsoft 365', from: cfg.microsoftSenderMailbox || '', source: msSecret ? 'App settings' : '' }
+    ? { configured: msConfigured, provider: 'Microsoft 365', from: cfg.microsoftSenderMailbox || '', source: msMode === 'marketplace' ? (connectionMatches ? 'Easy Connect' : 'Easy Connect — consent required') : (enterpriseSecret ? 'Customer Entra application' : ''), connectionMode: msMode, marketplaceAvailable:Boolean(marketplaceClientId && marketplaceClientSecret), consentAvailable:Boolean(marketplaceClientId && marketplaceRedirectUri), connected: connectionMatches }
     : { configured: Boolean(sendgridApiKey && sendgridFromEmail), provider: 'SendGrid', from: sendgridFromEmail, source: (await getProviderSecret('sendgridApiKey')) ? 'App settings' : (process.env.SENDGRID_API_KEY ? 'Forge environment' : '') };
   return {
     email,
@@ -387,133 +452,164 @@ async function providerStatus() {
   };
 }
 
-
-function dublinDateParts(date = new Date()) {
-  const parts = new Intl.DateTimeFormat('en-IE', {
-    timeZone: 'Europe/Dublin', year: 'numeric', month: '2-digit', day: '2-digit',
-    weekday: 'short', hour: '2-digit', hourCycle: 'h23'
-  }).formatToParts(date).reduce((acc, p) => { if (p.type !== 'literal') acc[p.type] = p.value; return acc; }, {});
-  return {
-    year: Number(parts.year), month: Number(parts.month), day: Number(parts.day),
-    weekday: parts.weekday, hour: Number(parts.hour)
-  };
-}
-
-function isFirstWednesdayNow(date, targetHour) {
-  const p = dublinDateParts(date);
-  return p.weekday === 'Wed' && p.day <= 7 && p.hour >= Number(targetHour ?? 10);
-}
-
-async function buildAutoTestStatus(contacts, settings) {
-  const clients = [...new Set(contacts.filter(c => c.active !== false && c.monthlyTestAlerts === true).map(c => normalizeTextValue(c.clientCode).toUpperCase()).filter(Boolean))].sort();
-  const rows = [];
-  for (const clientCode of clients) {
-    const history = (await kvs.get(`system-alert:test-history:${clientCode}`)) || [];
-    const last = history.find(h => h.automatic === true) || history[0] || null;
-    rows.push({ clientCode, last });
+async function microsoftMarketplaceSetup(cfgInput = null) {
+  const cfg = cfgInput || await getProviderSettings();
+  const clientId = process.env.MICROSOFT_MARKETPLACE_CLIENT_ID || '';
+  const clientSecret = process.env.MICROSOFT_MARKETPLACE_CLIENT_SECRET || '';
+  const redirectUri = process.env.MICROSOFT_MARKETPLACE_REDIRECT_URI || '';
+  const available = Boolean(clientId && clientSecret && redirectUri);
+  const connection = await getMicrosoftConnectionState();
+  const connected = connection.status === 'connected';
+  let consentUrl = '';
+  if (available) {
+    const q = new URLSearchParams({ client_id: clientId, scope: 'https://graph.microsoft.com/.default', redirect_uri: redirectUri, state: 'system-alert-manager' });
+    consentUrl = `https://login.microsoftonline.com/organizations/v2.0/adminconsent?${q.toString()}`;
   }
-  return { enabled: settings.monthlyTestEnabled !== false, hour: Number(settings.monthlyTestHour ?? 10), clients: rows };
+  let message = '';
+  if (!available) message = 'Publisher-side Microsoft connection is not configured in this Forge environment yet. No customer Tenant ID, Client ID or secret is required for Easy Connect.';
+  else if (connected) message = 'Microsoft 365 connection is active.';
+  else message = 'Ready to connect. Microsoft will identify the organisation during the connection flow.';
+  return { available, connected, consentUrl, redirectConfigured:Boolean(redirectUri), tenantConfigured:Boolean(connection.tenantId), senderConfigured:Boolean(connection.senderMailbox || cfg.microsoftSenderMailbox), tenantId:connection.tenantId || '', organisationName:connection.organisationName || '', senderMailbox:connection.senderMailbox || cfg.microsoftSenderMailbox || '', verifiedAt:connected ? connection.verifiedAt || '' : '', testSentAt:connected ? connection.testSentAt || '' : '', message };
 }
+
+
 
 resolver.define('getAdminData', async () => {
   const settings = await getSettings();
-  const rawContacts = await getAllContacts();
-  const contacts = [];
-
-  for (const c of rawContacts) {
-    const normalized = {
-      ...c,
-      clientCode: normalizeTextValue(c.clientCode).toUpperCase(),
-      clientName: normalizeTextValue(c.clientName),
-      name: normalizeTextValue(c.name),
-      email: normalizeTextValue(c.email),
-      mobile: normalizeTextValue(c.mobile),
-      priorities: normalizePriorities(c.priorities),
-      emailAlerts: c.emailAlerts === true,
-      smsAlerts: c.smsAlerts === true,
-      monthlyTestAlerts: c.monthlyTestAlerts === true,
-      active: c.active !== false
-    };
-
-    // Repair legacy records created by earlier versions of the app.
-    const changed = JSON.stringify({
-      email:c.email, mobile:c.mobile, priorities:c.priorities, emailAlerts:c.emailAlerts, smsAlerts:c.smsAlerts, monthlyTestAlerts:c.monthlyTestAlerts
-    }) !== JSON.stringify({
-      email:normalized.email, mobile:normalized.mobile, priorities:normalized.priorities, emailAlerts:normalized.emailAlerts, smsAlerts:normalized.smsAlerts, monthlyTestAlerts:normalized.monthlyTestAlerts
-    });
-    if (changed && normalized.id) {
-      await kvs.setSecret(`system-alert:contact:${normalized.id}`, normalized);
-    }
-
-    contacts.push({ ...normalized, mobileMasked: maskPhone(normalized.mobile) });
+  const [contactsRaw, jiraFields, jiraProjects, providers, providerSettings, templates, branding, microsoftMarketplace] = await Promise.all([
+    getAllContacts(), getJiraFields(), getJiraProjects(), providerStatus(), getProviderSettings(), getTemplates(), getBranding(), microsoftMarketplaceSetup()
+  ]);
+  const clientOptions = settings.clientFieldId ? await getClientOptions(settings.clientFieldId) : [];
+  const contacts = contactsRaw.map(c => ({ ...c, mobile: '', mobileMasked: maskPhone(normalizeTextValue(c.mobile)) }));
+  const monthlyClients = [...new Set(contactsRaw.filter(c => c.active !== false && c.monthlyTestAlerts && c.clientCode).map(c => c.clientCode))].sort();
+  const autoTestClients = [];
+  for (const clientCode of monthlyClients) {
+    const history = (await kvs.get(`system-alert:test-history:${clientCode}`)) || [];
+    autoTestClients.push({ clientCode, last: Array.isArray(history) && history.length ? history[history.length - 1] : null });
   }
-
-  const autoTestStatus = await buildAutoTestStatus(contacts, settings);
-  let clientOptions = [];
-  let jiraFields = [];
-  try { jiraFields = await getJiraFields(); } catch (e) { console.warn('Could not load Jira fields:', e.message); }
-  try { clientOptions = await getClientOptions(settings.clientFieldId); } catch (e) { console.warn('Could not load client options:', e.message); }
-  // Keep Jira display conditions in sync with the admin configuration.
-  // This also seeds the property automatically after upgrading from an older version.
-  try { await syncDisplayProperty(settings); } catch (e) { console.warn('Could not sync display property:', e.message); }
-  const providers = await getProviderSettings();
-  const templates = await getTemplates();
-  const branding = await getBranding();
-  const pStatus = await providerStatus();
   const setupStatus = {
-    jira: Boolean(settings.allowedProjectKey && settings.clientFieldId && settings.priorityConfigs?.length),
+    jira: Boolean(settings.allowedProjectKey && settings.clientFieldId && enabledPriorityNames(settings).length),
     clients: clientOptions.length > 0,
-    email: pStatus.email.configured,
-    sms: pStatus.sms.configured,
+    email: Boolean(providers.email?.configured),
+    sms: Boolean(providers.sms?.configured),
     contacts: contacts.length
   };
-  return { settings, contacts, clientOptions, jiraFields, providerSettings: providers, templates, branding, providerStatus: pStatus, setupStatus, autoTestStatus, appVersion: APP_VERSION };
+  return {
+    appVersion: APP_VERSION,
+    settings, contacts, clientOptions, jiraFields, jiraProjects,
+    providerStatus: providers, providerSettings, microsoftMarketplace,
+    templates, branding, setupStatus,
+    autoTestStatus: { enabled: settings.monthlyTestEnabled !== false, hour: Number(settings.monthlyTestHour ?? 10), clients: autoTestClients }
+  };
 });
 
 resolver.define('saveSettings', async ({ payload }) => {
   const current = await getSettings();
-  const next = { ...current, ...payload, priorityConfigs: normalizePriorityConfigs(payload.priorityConfigs ?? current.priorityConfigs), optionalFieldMappings: normalizeOptionalFieldMappings(payload.optionalFieldMappings ?? current.optionalFieldMappings) };
-  if (!normalizeTextValue(next.allowedProjectKey)) throw new Error('An allowed Jira project key is required.');
-  if (!next.priorityConfigs.length) throw new Error('Configure at least one System Alert priority.');
-  // Update the Jira app property first because issue-panel/action visibility reads this property.
-  await syncDisplayProperty(next);
+  const next = {
+    ...current,
+    clientFieldId: normalizeTextValue(payload?.clientFieldId),
+    issueStartFieldId: normalizeTextValue(payload?.issueStartFieldId),
+    nextUpdateFieldId: normalizeTextValue(payload?.nextUpdateFieldId),
+    optionalFieldMappings: normalizeOptionalFieldMappings(payload?.optionalFieldMappings),
+    allowedProjectKey: normalizeTextValue(payload?.allowedProjectKey),
+    fromName: normalizeTextValue(payload?.fromName || current.fromName || 'Service Desk').slice(0, 80),
+    replyToEmail: normalizeTextValue(payload?.replyToEmail).slice(0, 254),
+    priorityConfigs: normalizePriorityConfigs(payload?.priorityConfigs),
+    monthlyTestEnabled: payload?.monthlyTestEnabled !== false,
+    monthlyTestHour: Math.max(0, Math.min(23, Number.isFinite(Number(payload?.monthlyTestHour)) ? Number(payload.monthlyTestHour) : 10))
+  };
   await kvs.set(SETTINGS_KEY, next);
+  await syncDisplayProperty(next);
   return next;
 });
 
 resolver.define('saveProviderSettings', async ({ payload }) => {
   const current = await getProviderSettings();
-  const emailProvider = payload.emailProvider === 'microsoft365' ? 'microsoft365' : 'sendgrid';
   const next = {
     ...current,
-    emailProvider,
-    sendgridFromEmail: normalizeTextValue(payload.sendgridFromEmail),
-    sendgridFromName: normalizeTextValue(payload.sendgridFromName) || 'Service Desk',
-    sendgridReplyToEmail: normalizeTextValue(payload.sendgridReplyToEmail),
-    microsoftTenantId: normalizeTextValue(payload.microsoftTenantId),
-    microsoftClientId: normalizeTextValue(payload.microsoftClientId),
-    microsoftSenderMailbox: normalizeTextValue(payload.microsoftSenderMailbox),
-    microsoftFromName: normalizeTextValue(payload.microsoftFromName) || 'Service Desk',
-    microsoftReplyToEmail: normalizeTextValue(payload.microsoftReplyToEmail),
+    emailProvider: payload?.emailProvider === 'microsoft365' ? 'microsoft365' : 'sendgrid',
+    sendgridFromEmail: normalizeTextValue(payload?.sendgridFromEmail).slice(0,254),
+    sendgridFromName: normalizeTextValue(payload?.sendgridFromName || 'Service Desk').slice(0,80),
+    sendgridReplyToEmail: normalizeTextValue(payload?.sendgridReplyToEmail).slice(0,254),
+    microsoftMode: payload?.microsoftMode === 'enterprise' ? 'enterprise' : 'marketplace',
+    microsoftTenantId: normalizeTextValue(payload?.microsoftTenantId).slice(0,100),
+    microsoftClientId: normalizeTextValue(payload?.microsoftClientId).slice(0,100),
+    microsoftSenderMailbox: normalizeTextValue(payload?.microsoftSenderMailbox).slice(0,254),
+    microsoftFromName: normalizeTextValue(payload?.microsoftFromName || 'Service Desk').slice(0,80),
+    microsoftReplyToEmail: normalizeTextValue(payload?.microsoftReplyToEmail).slice(0,254),
     smsProvider: 'twilio',
-    twilioRegion: payload.twilioRegion === 'ie1' ? 'ie1' : 'global',
-    twilioFromNumber: normalizeTextValue(payload.twilioFromNumber),
-    twilioMessagingServiceSid: normalizeTextValue(payload.twilioMessagingServiceSid)
+    twilioRegion: ['global','us1','au1'].includes(normalizeTextValue(payload?.twilioRegion).toLowerCase()) ? normalizeTextValue(payload.twilioRegion).toLowerCase() : 'global',
+    twilioFromNumber: normalizeTextValue(payload?.twilioFromNumber).slice(0,40),
+    twilioMessagingServiceSid: normalizeTextValue(payload?.twilioMessagingServiceSid).slice(0,80)
   };
   await kvs.set(PROVIDER_SETTINGS_KEY, next);
-  const secretInputs = {
-    sendgridApiKey: payload.sendgridApiKey,
-    microsoftClientSecret: payload.microsoftClientSecret,
-    twilioAccountSid: payload.twilioAccountSid,
-    twilioAuthToken: payload.twilioAuthToken,
-    twilioApiKey: payload.twilioApiKey,
-    twilioApiSecret: payload.twilioApiSecret
-  };
-  for (const [name, value] of Object.entries(secretInputs)) {
-    const clean = normalizeTextValue(value);
-    if (clean) await kvs.setSecret(PROVIDER_SECRET_KEYS[name], clean);
+  for (const name of Object.keys(PROVIDER_SECRET_KEYS)) {
+    const value = normalizeTextValue(payload?.[name]);
+    if (value) await kvs.setSecret(PROVIDER_SECRET_KEYS[name], value);
   }
-  return { settings: next, status: await providerStatus() };
+  return { settings: next, status: await providerStatus(), microsoftMarketplace: await microsoftMarketplaceSetup(next) };
+});
+
+resolver.define('startMicrosoftMarketplaceConnection', async () => {
+  const setup = await microsoftMarketplaceSetup();
+  if (!setup.available || !setup.consentUrl) throw new Error(setup.message || 'Microsoft 365 Easy Connect is not available in this environment yet.');
+  return { consentUrl: setup.consentUrl, message: setup.message };
+});
+
+resolver.define('getMicrosoftMarketplaceSetup', async () => {
+  return await microsoftMarketplaceSetup();
+});
+
+
+resolver.define('saveMicrosoftMarketplaceSettings', async ({ payload }) => {
+  const current = await getProviderSettings();
+  const tenantId = normalizeTextValue(payload?.microsoftTenantId);
+  const senderMailbox = normalizeTextValue(payload?.microsoftSenderMailbox);
+  if (!tenantId) throw new Error('Enter the Microsoft Tenant ID.');
+  if (!senderMailbox || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(senderMailbox)) throw new Error('Enter a valid Microsoft 365 sender mailbox.');
+  const oldIdentity = `${normalizeTextValue(current.microsoftTenantId)}|${normalizeTextValue(current.microsoftSenderMailbox).toLowerCase()}`;
+  const next = {
+    ...current,
+    emailProvider: 'microsoft365',
+    microsoftMode: 'marketplace',
+    microsoftTenantId: tenantId,
+    microsoftSenderMailbox: senderMailbox,
+    microsoftFromName: normalizeTextValue(payload?.microsoftFromName) || current.microsoftFromName || 'Service Desk',
+    microsoftReplyToEmail: normalizeTextValue(payload?.microsoftReplyToEmail) || senderMailbox
+  };
+  await kvs.set(PROVIDER_SETTINGS_KEY, next);
+  const newIdentity = `${tenantId}|${senderMailbox.toLowerCase()}`;
+  if (oldIdentity !== newIdentity) await kvs.delete(MICROSOFT_CONNECTION_KEY);
+  return { settings: next, microsoftMarketplace: await microsoftMarketplaceSetup(next), status: await providerStatus() };
+});
+
+resolver.define('verifyMicrosoftMarketplaceConnection', async () => {
+  const cfg = await getProviderSettings();
+  if (cfg.microsoftMode === 'enterprise') throw new Error('Easy Connect is not selected.');
+  if (!normalizeTextValue(cfg.microsoftTenantId) || !normalizeTextValue(cfg.microsoftSenderMailbox)) throw new Error('Save the Microsoft Tenant ID and sender mailbox first.');
+  try {
+    const token = await getMicrosoftAccessToken(cfg);
+    const roles = microsoftTokenRoles(token);
+    if (!roles.includes('Mail.Send')) throw new Error('Microsoft returned a token, but Mail.Send application permission is not present. Ask a Microsoft administrator to grant consent, then try Verify again.');
+    const previous = await getMicrosoftConnectionState();
+    await saveMicrosoftConnectionState({
+      status: 'connected',
+      tenantId: cfg.microsoftTenantId,
+      senderMailbox: cfg.microsoftSenderMailbox,
+      verifiedAt: new Date().toISOString(),
+      testSentAt: previous.testSentAt || '',
+      lastError: ''
+    });
+    return { ok: true, microsoftMarketplace: await microsoftMarketplaceSetup(cfg), status: await providerStatus() };
+  } catch (e) {
+    await saveMicrosoftConnectionState({ status:'disconnected', tenantId:cfg.microsoftTenantId, senderMailbox:cfg.microsoftSenderMailbox, lastError:e?.message || String(e) });
+    throw e;
+  }
+});
+
+resolver.define('disconnectMicrosoftMarketplace', async () => {
+  await kvs.delete(MICROSOFT_CONNECTION_KEY);
+  return { ok:true, microsoftMarketplace: await microsoftMarketplaceSetup(), status: await providerStatus() };
 });
 
 resolver.define('testEmailProvider', async ({ payload }) => {
@@ -524,6 +620,11 @@ resolver.define('testEmailProvider', async ({ payload }) => {
   const a = { alertType:'initial', issueKey:'TEST-EMAIL', clientCode:'TEST', priority:'P1', priorityLabel:'P1', priorityConfig:{name:'P1',label:'P1',color:'#AE2E24'}, summary:'System Alert email provider test', startTime:formatDateTime(new Date().toISOString()), nextUpdate:'Not applicable', message:'This is a test email from System Alert Manager.', fromName:settings.fromName };
   const templates = await getTemplates();
   await sendEmail([to], 'TEST ONLY | System Alert Manager email configuration', buildEmailHtml(a, templates, branding), buildEmailText(a, templates), settings.fromName, settings.replyToEmail, branding);
+  const cfg = await getProviderSettings();
+  if (cfg.emailProvider === 'microsoft365' && cfg.microsoftMode !== 'enterprise') {
+    const previous = await getMicrosoftConnectionState();
+    await saveMicrosoftConnectionState({ status:'connected', tenantId:cfg.microsoftTenantId, senderMailbox:cfg.microsoftSenderMailbox, verifiedAt:previous.verifiedAt || new Date().toISOString(), testSentAt:new Date().toISOString(), lastError:'' });
+  }
   return { ok:true };
 });
 
@@ -909,6 +1010,7 @@ function buildSmsText(a, templates = DEFAULT_TEMPLATES) {
 }
 
 async function sendTwilio(to, body) {
+  if (String(process.env.SYSTEM_ALERT_MOCK_PROVIDERS || '').toLowerCase() === 'true') return { sid: 'MOCK-SMS', status: 'mocked', to, body };
   const cfg = await getProviderSettings();
   const accountSid = (await getProviderSecret('twilioAccountSid')) || process.env.TWILIO_ACCOUNT_SID;
   const username = (await getProviderSecret('twilioApiKey')) || process.env.TWILIO_API_KEY || accountSid;
@@ -937,9 +1039,17 @@ async function sendTwilio(to, body) {
 
 async function getMicrosoftAccessToken(cfg) {
   const tenantId = normalizeTextValue(cfg.microsoftTenantId);
-  const clientId = normalizeTextValue(cfg.microsoftClientId);
-  const clientSecret = await getProviderSecret('microsoftClientSecret');
-  if (!tenantId || !clientId || !clientSecret) throw new Error('Microsoft 365 is not configured. Add Tenant ID, Client ID and Client Secret in Communication Providers.');
+  const mode = cfg.microsoftMode === 'enterprise' ? 'enterprise' : 'marketplace';
+  const clientId = mode === 'marketplace'
+    ? normalizeTextValue(process.env.MICROSOFT_MARKETPLACE_CLIENT_ID)
+    : normalizeTextValue(cfg.microsoftClientId);
+  const clientSecret = mode === 'marketplace'
+    ? normalizeTextValue(process.env.MICROSOFT_MARKETPLACE_CLIENT_SECRET)
+    : await getProviderSecret('microsoftClientSecret');
+  if (!tenantId || !clientId || !clientSecret) {
+    if (mode === 'marketplace') throw new Error('Microsoft 365 Marketplace connection is not ready. Enter the Tenant ID and ensure the System Alert Marketplace Microsoft application is configured.');
+    throw new Error('Microsoft 365 Enterprise setup is incomplete. Add Tenant ID, Client ID and Client Secret in Communication Providers.');
+  }
   const body = new URLSearchParams({ client_id: clientId, client_secret: clientSecret, scope: 'https://graph.microsoft.com/.default', grant_type: 'client_credentials' });
   const res = await fetch(`https://login.microsoftonline.com/${encodeURIComponent(tenantId)}/oauth2/v2.0/token`, { method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body:body.toString() });
   if (!res.ok) throw new Error(`Microsoft 365 authentication failed (${res.status}): ${await res.text()}`);
@@ -949,6 +1059,7 @@ async function getMicrosoftAccessToken(cfg) {
 }
 
 async function sendMicrosoft365(toEmails, subject, html, text, fromName, replyToEmail='', branding=null) {
+  if (String(process.env.SYSTEM_ALERT_MOCK_PROVIDERS || '').toLowerCase() === 'true') return { mocked: true, provider: 'microsoft365', recipients: toEmails, subject };
   const cfg = await getProviderSettings();
   const sender = normalizeTextValue(cfg.microsoftSenderMailbox);
   if (!sender) throw new Error('Microsoft 365 sender mailbox is not configured.');
@@ -970,6 +1081,7 @@ async function sendMicrosoft365(toEmails, subject, html, text, fromName, replyTo
 }
 
 async function sendEmail(toEmails, subject, html, text, fromName, replyToEmail='', branding=null) {
+  if (String(process.env.SYSTEM_ALERT_MOCK_PROVIDERS || '').toLowerCase() === 'true') return { mocked: true, provider: 'email', recipients: toEmails, subject };
   const cfg = await getProviderSettings();
   if (cfg.emailProvider === 'microsoft365') return await sendMicrosoft365(toEmails, subject, html, text, fromName, replyToEmail, branding);
   const apiKey = (await getProviderSecret('sendgridApiKey')) || process.env.SENDGRID_API_KEY;

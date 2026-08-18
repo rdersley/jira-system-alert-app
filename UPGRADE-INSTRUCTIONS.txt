@@ -1,13 +1,7 @@
-System Alert Manager v3.8.0 upgrade
+System Alert Manager v3.9.2 upgrade
 
-1. Copy/extract this package over C:\jiraapps\jira-system-alert-app.
-2. Build the Alert, Admin, and Panel UIs, or run deploy-dev.ps1.
-3. Run forge lint before deploying.
-4. v3.8.0 adds external egress for Microsoft login and Microsoft Graph. Forge may request a MAJOR_VERSION_RULE approval.
-5. If requested, run:
-   forge deploy --approve MAJOR_VERSION_RULE
-   forge install --upgrade
-6. Open System Alert Manager > General and verify the Jira field mappings.
-7. Open Communication Providers, choose SendGrid or Microsoft 365, save the configuration, then send a test email.
-
-Existing contacts, branding, templates, SendGrid/Twilio secrets, priorities, and monthly-test settings are preserved.
+1. Copy/extract this release over the existing registered Forge app folder.
+2. Do NOT run forge register.
+3. Run .\deploy-dev.ps1 from the app root.
+4. No new Forge scopes or egress entries are introduced by v3.9.2.
+5. Easy Connect requires vendor Forge environment variables MICROSOFT_MARKETPLACE_CLIENT_ID, MICROSOFT_MARKETPLACE_CLIENT_SECRET and MICROSOFT_MARKETPLACE_REDIRECT_URI before Connect can be used.

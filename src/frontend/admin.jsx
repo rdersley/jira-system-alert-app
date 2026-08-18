@@ -19,8 +19,8 @@ function SettingsForm({ settings, onSaved }) {
   const { handleSubmit, register, getFieldId } = useForm({
     defaultValues: {
       clientFieldId: settings.clientFieldId || '',
-      issueStartFieldId: settings.issueStartFieldId || 'customfield_10786',
-      nextUpdateFieldId: settings.nextUpdateFieldId || 'customfield_10788',
+      issueStartFieldId: settings.issueStartFieldId || '',
+      nextUpdateFieldId: settings.nextUpdateFieldId || '',
       allowedProjectKey: settings.allowedProjectKey || 'SD',
       fromName: settings.fromName || 'Service Desk'
     }
@@ -32,10 +32,10 @@ function SettingsForm({ settings, onSaved }) {
       <Textfield {...register('clientFieldId')} placeholder="customfield_10115" />
 
       <Label labelFor={getFieldId('issueStartFieldId')}>Issue Start Time field ID</Label>
-      <Textfield {...register('issueStartFieldId')} placeholder="customfield_10786" />
+      <Textfield {...register('issueStartFieldId')} placeholder="Optional Jira date/time field" />
 
       <Label labelFor={getFieldId('nextUpdateFieldId')}>Next Update Due field ID</Label>
-      <Textfield {...register('nextUpdateFieldId')} placeholder="customfield_10788" />
+      <Textfield {...register('nextUpdateFieldId')} placeholder="Optional Jira date/time field" />
 
       <Label labelFor={getFieldId('allowedProjectKey')}>Allowed project</Label>
       <Textfield {...register('allowedProjectKey')} />

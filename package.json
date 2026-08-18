@@ -1,6 +1,6 @@
 {
   "name": "system-alert-manager",
-  "version": "3.8.0",
+  "version": "3.9.4",
   "private": true,
   "license": "UNLICENSED",
   "dependencies": {
@@ -10,5 +10,9 @@
     "@forge/react": "12.0.0",
     "@forge/resolver": "2.0.0",
     "react": "18.3.1"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "test:quick": "node --test test/safety.test.mjs"
   }
 }
