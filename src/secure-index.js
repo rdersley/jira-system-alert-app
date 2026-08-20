@@ -222,9 +222,19 @@ Resolver.prototype.define = function hardenedDefine(key, fn) {
   });
 };
 
-const app = await import('./index.js');
+let appPromise;
+function loadApp() {
+  if (!appPromise) appPromise = import('./index.js');
+  return appPromise;
+}
 
-export const handler = app.handler;
+// Forge expects the manifest export to be a callable function. Loading the
+// resolver module inside the function keeps the hardening patch in place while
+// avoiding top-level await, which breaks Forge's function export discovery.
+export async function handler(...args) {
+  const app = await loadApp();
+  return app.handler(...args);
+}
 
 // Scheduled triggers do not pass through Resolver.define, so enforce the same
 // production licence rule explicitly before a monthly test can send anything.
@@ -238,5 +248,6 @@ export async function monthlyTestScheduler(...args) {
   if (licence.enforced && !licence.active) {
     return { skipped: 'System Alert Manager Marketplace licence is inactive.' };
   }
+  const app = await loadApp();
   return app.monthlyTestScheduler(...args);
 }
