@@ -13,11 +13,14 @@ function adminResolverBlock(guard) {
   return guard.slice(start, end);
 }
 
-test('resolver entry point is protected by final release and admin guards', () => {
+test('Forge runtime points directly at the hardened entry point', () => {
   const manifest = text('manifest.yml');
-  assert.match(manifest, /handler:\s+final-index\.handler/);
-  const releaseGuard = text('src/final-index.js');
-  assert.match(releaseGuard, /await import\('\.\/secure-index\.js'\)/);
+  assert.match(manifest, /handler:\s+secure-index\.handler/);
+  assert.match(manifest, /handler:\s+secure-index\.monthlyTestScheduler/);
+  const guard = text('src/secure-index.js');
+  assert.match(guard, /const app = await import\('\.\/index\.js'\)/);
+  assert.match(guard, /export const handler = app\.handler/);
+  assert.match(guard, /export async function monthlyTestScheduler/);
 });
 
 test('admin guard checks Jira ADMINISTER permission', () => {
