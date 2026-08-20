@@ -13,9 +13,9 @@ test('scheduled monthly test uses hardened licence-aware scheduler directly', ()
   const manifest = text('manifest.yml');
   const guard = text('src/secure-index.js');
   assert.match(manifest, /monthly-test-scheduler[\s\S]*handler:\s+secure-index\.monthlyTestScheduler/);
-  assert.match(guard, /export async function monthlyTestScheduler/);
-  assert.match(guard, /await app\.monthlyTestScheduler\(event, context\)/);
-  assert.match(guard, /requires an active Marketplace licence to run the monthly test/);
+  assert.match(guard, /export async function monthlyTestScheduler\(\.\.\.args\)/);
+  assert.match(guard, /return app\.monthlyTestScheduler\(\.\.\.args\)/);
+  assert.match(guard, /Marketplace licence is inactive/);
 });
 
 test('message delivery is blocked for inactive production licences', () => {
