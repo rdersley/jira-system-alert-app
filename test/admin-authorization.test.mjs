@@ -13,14 +13,17 @@ function adminResolverBlock(guard) {
   return guard.slice(start, end);
 }
 
-test('Forge runtime points directly at the hardened entry point', () => {
+test('Forge runtime points directly at a callable hardened entry point', () => {
   const manifest = text('manifest.yml');
   assert.match(manifest, /handler:\s+secure-index\.handler/);
   assert.match(manifest, /handler:\s+secure-index\.monthlyTestScheduler/);
   const guard = text('src/secure-index.js');
-  assert.match(guard, /const app = await import\('\.\/index\.js'\)/);
-  assert.match(guard, /export const handler = app\.handler/);
-  assert.match(guard, /export async function monthlyTestScheduler/);
+  assert.match(guard, /function loadApp\(\)/);
+  assert.match(guard, /appPromise = import\('\.\/index\.js'\)/);
+  assert.match(guard, /export async function handler\(\.\.\.args\)/);
+  assert.match(guard, /return app\.handler\(\.\.\.args\)/);
+  assert.match(guard, /export async function monthlyTestScheduler\(\.\.\.args\)/);
+  assert.equal(/const app = await import\('\.\/index\.js'\)/.test(guard), false, 'top-level await must not be used by the Forge entry point');
 });
 
 test('admin guard checks Jira ADMINISTER permission', () => {
