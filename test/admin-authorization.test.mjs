@@ -4,6 +4,15 @@ import { readFileSync } from 'node:fs';
 
 const text = path => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 
+function adminResolverBlock(guard) {
+  const start = guard.indexOf('const ADMIN_RESOLVERS');
+  const end = guard.indexOf('const LICENSED_DELIVERY_RESOLVERS');
+  assert.notEqual(start, -1, 'ADMIN_RESOLVERS declaration should exist');
+  assert.notEqual(end, -1, 'LICENSED_DELIVERY_RESOLVERS declaration should exist');
+  assert.ok(end > start, 'ADMIN_RESOLVERS block should end before licensed delivery resolvers');
+  return guard.slice(start, end);
+}
+
 test('resolver entry point is protected by final release and admin guards', () => {
   const manifest = text('manifest.yml');
   assert.match(manifest, /handler:\s+final-index\.handler/);
@@ -19,15 +28,15 @@ test('admin guard checks Jira ADMINISTER permission', () => {
 
 test('ticket alert resolvers remain outside the admin-only set', () => {
   const guard = text('src/secure-index.js');
+  const adminSet = adminResolverBlock(guard);
   for (const key of ['getIssueAlertData','previewEmail','sendAlert']) {
-    const adminSet = guard.slice(guard.indexOf('const ADMIN_RESOLVERS'), guard.indexOf('async function requireJiraAdmin'));
     assert.equal(adminSet.includes(`'${key}'`), false, `${key} must remain usable by authorised Jira agents`);
   }
 });
 
 test('sensitive configuration resolvers are admin-only', () => {
   const guard = text('src/secure-index.js');
-  const adminSet = guard.slice(guard.indexOf('const ADMIN_RESOLVERS'), guard.indexOf('async function requireJiraAdmin'));
+  const adminSet = adminResolverBlock(guard);
   for (const key of ['getAdminData','saveSettings','saveProviderSettings','saveMicrosoftMarketplaceSettings','saveTemplates','saveBranding','saveContact','deleteContact']) {
     assert.equal(adminSet.includes(`'${key}'`), true, `${key} should require Jira administrator permission`);
   }
