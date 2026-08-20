@@ -30,9 +30,9 @@ modules:
       title: System Alert Manager
   function:
     - key: resolver
-      handler: final-index.handler
+      handler: secure-index.handler
     - key: monthly-test-scheduler
-      handler: final-index.monthlyTestScheduler
+      handler: secure-index.monthlyTestScheduler
       timeoutSeconds: 300
 
 resources:
