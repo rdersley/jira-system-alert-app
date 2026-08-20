@@ -4,9 +4,11 @@ import { readFileSync } from 'node:fs';
 
 const text = path => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 
-test('resolver entry point is protected by admin authorization guard', () => {
+test('resolver entry point is protected by final release and admin guards', () => {
   const manifest = text('manifest.yml');
-  assert.match(manifest, /handler:\s+secure-index\.handler/);
+  assert.match(manifest, /handler:\s+final-index\.handler/);
+  const releaseGuard = text('src/final-index.js');
+  assert.match(releaseGuard, /await import\('\.\/secure-index\.js'\)/);
 });
 
 test('admin guard checks Jira ADMINISTER permission', () => {
