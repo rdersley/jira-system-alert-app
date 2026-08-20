@@ -9,9 +9,12 @@ test('Marketplace licensing is enabled in manifest', () => {
   assert.match(manifest, /licensing:\s*\n\s+enabled:\s*true/);
 });
 
-test('scheduled monthly test uses secure licence-aware entry point', () => {
+test('scheduled monthly test uses final release entry point backed by secure licence-aware scheduler', () => {
   const manifest = text('manifest.yml');
-  assert.match(manifest, /monthly-test-scheduler[\s\S]*handler:\s+secure-index\.monthlyTestScheduler/);
+  const releaseEntry = text('src/final-index.js');
+  assert.match(manifest, /monthly-test-scheduler[\s\S]*handler:\s+final-index\.monthlyTestScheduler/);
+  assert.match(releaseEntry, /import\('\.\/secure-index\.js'\)/);
+  assert.match(releaseEntry, /export const monthlyTestScheduler = secure\.monthlyTestScheduler/);
 });
 
 test('message delivery is blocked for inactive production licences', () => {
