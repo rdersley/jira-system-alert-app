@@ -27,6 +27,9 @@ permissions:
 jobs:
   validate:
     runs-on: ubuntu-latest
+    env:
+      FORGE_EMAIL: ${{ secrets.FORGE_EMAIL }}
+      FORGE_API_TOKEN: ${{ secrets.FORGE_API_TOKEN }}
     outputs:
       forge_app: ${{ steps.detect.outputs.forge_app }}
     steps:
@@ -53,6 +56,12 @@ jobs:
         shell: bash
         run: |
           node -e "const p=require('./package.json');process.exit(p.scripts&&p.scripts.build?0:1)" && npm run build || echo "No root build script; skipping"
+      - name: Check Forge credentials
+        if: steps.detect.outputs.forge_app == 'true'
+        shell: bash
+        run: |
+          test -n "$FORGE_EMAIL" || (echo "Missing FORGE_EMAIL secret" && exit 1)
+          test -n "$FORGE_API_TOKEN" || (echo "Missing FORGE_API_TOKEN secret" && exit 1)
       - name: Forge lint
         if: steps.detect.outputs.forge_app == 'true'
         run: |
