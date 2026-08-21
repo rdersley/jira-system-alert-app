@@ -12,6 +12,16 @@ test('fresh install does not expose System Alert through an SD/P1/P2 manifest fa
   assert.equal(manifest.includes("app.properties['system-alert-display'] != null"), true);
 });
 
+test('fresh install admin data is scrubbed of customer-specific assumptions', () => {
+  const hardened = text('src/secure-index.js');
+  assert.match(hardened, /storedSettings\s*=\s*await kvs\.get\(SETTINGS_KEY\)/);
+  assert.match(hardened, /allowedProjectKey:\s*''/);
+  assert.match(hardened, /clientFieldId:\s*''/);
+  assert.match(hardened, /replyToEmail:\s*''/);
+  assert.match(hardened, /priorityConfigs:\s*\[\]/);
+  assert.match(hardened, /optionalFieldMappings:\s*\[\]/);
+});
+
 test('Forge runtime uses the tested hardened entry point without a second Resolver monkey-patch layer', () => {
   const manifest = text('manifest.yml');
   assert.match(manifest, /handler:\s+secure-index\.handler/);
