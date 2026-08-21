@@ -1,6 +1,8 @@
 import Resolver from '@forge/resolver';
 import api, { route, getAppContext } from '@forge/api';
+import { kvs } from '@forge/kvs';
 
+const SETTINGS_KEY = 'system-alert:settings';
 const ADMIN_RESOLVERS = new Set([
   'getAdminData',
   'saveSettings',
@@ -208,15 +210,39 @@ async function requireJiraAdmin() {
   }
 }
 
+async function sanitizeFreshInstallAdminData(result) {
+  if (!result || typeof result !== 'object') return result;
+  const storedSettings = await kvs.get(SETTINGS_KEY);
+  if (storedSettings != null) return result;
+
+  const settings = result.settings && typeof result.settings === 'object' ? result.settings : {};
+  return {
+    ...result,
+    settings: {
+      ...settings,
+      allowedProjectKey: '',
+      clientFieldId: '',
+      issueStartFieldId: '',
+      nextUpdateFieldId: '',
+      replyToEmail: '',
+      priorityConfigs: [],
+      optionalFieldMappings: []
+    }
+  };
+}
+
 const originalDefine = Resolver.prototype.define;
 Resolver.prototype.define = function hardenedDefine(key, fn) {
   return originalDefine.call(this, key, async request => {
     validateResolverPayload(key, request?.payload || {});
     if (ADMIN_RESOLVERS.has(key)) await requireJiraAdmin();
     if (LICENSED_DELIVERY_RESOLVERS.has(key)) requireActiveLicence(request?.context || {});
-    const result = await fn(request);
-    if (key === 'getAdminData' && result && typeof result === 'object') {
-      return { ...result, marketplaceLicence: licenceState(request?.context || {}) };
+    let result = await fn(request);
+    if (key === 'getAdminData') {
+      result = await sanitizeFreshInstallAdminData(result);
+      if (result && typeof result === 'object') {
+        result = { ...result, marketplaceLicence: licenceState(request?.context || {}) };
+      }
     }
     return result;
   });
