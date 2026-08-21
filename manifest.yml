@@ -11,7 +11,7 @@ modules:
       title: Send System Alert
       viewportSize: large
       displayConditions:
-        jiraExpression: "(app.properties['system-alert-display'] == null && project.key == 'SD' && ['P1','P2'].includes(issue.priority.name)) || (app.properties['system-alert-display'] != null && project.key == app.properties['system-alert-display'].projectKey && app.properties['system-alert-display'].priorities.includes(issue.priority.name))"
+        jiraExpression: "app.properties['system-alert-display'] != null && project.key == app.properties['system-alert-display'].projectKey && app.properties['system-alert-display'].priorities.includes(issue.priority.name)"
   jira:issuePanel:
     - key: system-alert-panel
       resource: panel-ui-custom
@@ -20,7 +20,7 @@ modules:
       title: System Alert
       icon: "https://developer.atlassian.com/platform/forge/images/icons/issue-panel-icon.svg"
       displayConditions:
-        jiraExpression: "(app.properties['system-alert-display'] == null && project.key == 'SD' && ['P1','P2'].includes(issue.priority.name)) || (app.properties['system-alert-display'] != null && project.key == app.properties['system-alert-display'].projectKey && app.properties['system-alert-display'].priorities.includes(issue.priority.name))"
+        jiraExpression: "app.properties['system-alert-display'] != null && project.key == app.properties['system-alert-display'].projectKey && app.properties['system-alert-display'].priorities.includes(issue.priority.name)"
   jira:adminPage:
     - key: system-alert-admin
       resource: admin-ui-custom
@@ -30,9 +30,9 @@ modules:
       title: System Alert Manager
   function:
     - key: resolver
-      handler: index.handler
+      handler: secure-index.handler
     - key: monthly-test-scheduler
-      handler: index.monthlyTestScheduler
+      handler: secure-index.monthlyTestScheduler
       timeoutSeconds: 300
 
 resources:
@@ -63,4 +63,6 @@ permissions:
 app:
   runtime:
     name: nodejs22.x
+  licensing:
+    enabled: true
   id: ari:cloud:ecosystem::app/8c53b866-0bd4-46bf-ab53-f3de18378d6b
