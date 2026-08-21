@@ -67,6 +67,7 @@ jobs:
         run: |
           npm install --global @forge/cli
           forge settings set usage-analytics false
+          forge settings set default-environment "${{ inputs.environment }}"
           forge lint
 
   deploy-sandbox:
@@ -93,6 +94,7 @@ jobs:
           if [ -f package-lock.json ]; then npm ci; elif [ -f package.json ]; then npm install; fi
           npm install --global @forge/cli
           forge settings set usage-analytics false
+          forge settings set default-environment "${{ inputs.environment }}"
       - name: Deploy Forge app
         run: forge deploy --environment "${{ inputs.environment }}" --non-interactive
       - name: Upgrade sandbox installation
