@@ -57,6 +57,7 @@ jobs:
         if: steps.detect.outputs.forge_app == 'true'
         run: |
           npm install --global @forge/cli
+          forge settings set usage-analytics false
           forge lint
 
   deploy-sandbox:
@@ -82,6 +83,7 @@ jobs:
         run: |
           if [ -f package-lock.json ]; then npm ci; elif [ -f package.json ]; then npm install; fi
           npm install --global @forge/cli
+          forge settings set usage-analytics false
       - name: Deploy Forge app
         run: forge deploy --environment "${{ inputs.environment }}" --non-interactive
       - name: Upgrade sandbox installation
