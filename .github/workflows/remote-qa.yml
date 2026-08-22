@@ -1,6 +1,8 @@
 name: Remote Forge QA
 
 on:
+  push:
+  pull_request:
   workflow_dispatch:
     inputs:
       deploy:
@@ -46,47 +48,57 @@ jobs:
         shell: bash
         run: |
           if [ -f package-lock.json ]; then npm ci; else npm install; fi
-      - name: Run tests when defined
+      - name: Run root tests when defined
         if: hashFiles('package.json') != ''
         shell: bash
         run: |
-          node -e "const p=require('./package.json');process.exit(p.scripts&&p.scripts.test?0:1)" && npm test || echo "No root test script; skipping"
+          if node -e "const p=require('./package.json');process.exit(p.scripts&&p.scripts.test?0:1)"; then
+            npm test
+          else
+            echo "No root test script; skipping"
+          fi
       - name: Run root build when defined
         if: hashFiles('package.json') != ''
         shell: bash
         run: |
-          node -e "const p=require('./package.json');process.exit(p.scripts&&p.scripts.build?0:1)" && npm run build || echo "No root build script; skipping"
+          if node -e "const p=require('./package.json');process.exit(p.scripts&&p.scripts.build?0:1)"; then
+            npm run build
+          else
+            echo "No root build script; skipping"
+          fi
       - name: Build Custom UI resources
         shell: bash
         run: |
-          for dir in static/alert static/panel static/admin; do
-            if [ -f "$dir/package.json" ]; then
-              echo "Building $dir"
-              if [ -f "$dir/package-lock.json" ]; then
-                npm --prefix "$dir" ci
-              else
-                npm --prefix "$dir" install
+          if [ -d static ]; then
+            for dir in static/*; do
+              [ -d "$dir" ] || continue
+              if [ -f "$dir/package.json" ]; then
+                echo "Building $dir"
+                if [ -f "$dir/package-lock.json" ]; then npm --prefix "$dir" ci; else npm --prefix "$dir" install; fi
+                if node -e "const p=require('./$dir/package.json');process.exit(p.scripts&&p.scripts.build?0:1)"; then
+                  npm --prefix "$dir" run build
+                else
+                  echo "No build script in $dir; skipping"
+                fi
               fi
-              npm --prefix "$dir" run build
-            fi
-          done
-      - name: Check Forge credentials
+            done
+          fi
+      - name: Forge lint
         if: steps.detect.outputs.forge_app == 'true'
         shell: bash
         run: |
-          test -n "$FORGE_EMAIL" || (echo "Missing FORGE_EMAIL secret" && exit 1)
-          test -n "$FORGE_API_TOKEN" || (echo "Missing FORGE_API_TOKEN secret" && exit 1)
-      - name: Forge lint
-        if: steps.detect.outputs.forge_app == 'true'
-        run: |
+          if [ -z "$FORGE_EMAIL" ] || [ -z "$FORGE_API_TOKEN" ]; then
+            echo "Forge secrets are not configured for this repository; skipping Forge lint."
+            exit 0
+          fi
           npm install --global @forge/cli
           forge settings set usage-analytics false
-          forge settings set default-environment "${{ inputs.environment }}"
+          forge settings set default-environment development
           forge lint
 
   deploy-sandbox:
     needs: validate
-    if: inputs.deploy == true && needs.validate.outputs.forge_app == 'true'
+    if: github.event_name == 'workflow_dispatch' && inputs.deploy == true && needs.validate.outputs.forge_app == 'true'
     runs-on: ubuntu-latest
     environment: nuvriqo-sandbox
     env:
@@ -102,7 +114,7 @@ jobs:
         run: |
           test -n "$FORGE_EMAIL" || (echo "Missing FORGE_EMAIL secret" && exit 1)
           test -n "$FORGE_API_TOKEN" || (echo "Missing FORGE_API_TOKEN secret" && exit 1)
-      - name: Install root dependencies
+      - name: Install root dependencies and Forge CLI
         shell: bash
         run: |
           if [ -f package-lock.json ]; then npm ci; elif [ -f package.json ]; then npm install; fi
@@ -112,17 +124,15 @@ jobs:
       - name: Build Custom UI resources
         shell: bash
         run: |
-          for dir in static/alert static/panel static/admin; do
-            if [ -f "$dir/package.json" ]; then
-              echo "Building $dir"
-              if [ -f "$dir/package-lock.json" ]; then
-                npm --prefix "$dir" ci
-              else
-                npm --prefix "$dir" install
+          if [ -d static ]; then
+            for dir in static/*; do
+              [ -d "$dir" ] || continue
+              if [ -f "$dir/package.json" ]; then
+                if [ -f "$dir/package-lock.json" ]; then npm --prefix "$dir" ci; else npm --prefix "$dir" install; fi
+                if node -e "const p=require('./$dir/package.json');process.exit(p.scripts&&p.scripts.build?0:1)"; then npm --prefix "$dir" run build; fi
               fi
-              npm --prefix "$dir" run build
-            fi
-          done
+            done
+          fi
       - name: Deploy Forge app
         run: forge deploy --environment "${{ inputs.environment }}" --non-interactive
       - name: Upgrade sandbox installation
