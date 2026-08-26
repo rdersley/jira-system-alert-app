@@ -12,7 +12,9 @@
     "react": "18.3.1"
   },
   "scripts": {
+    "prepare": "node scripts/sync-version.mjs",
     "test": "node --test test/*.test.mjs",
-    "test:quick": "node --test test/safety.test.mjs"
+    "test:quick": "node --test test/safety.test.mjs",
+    "sync:version": "node scripts/sync-version.mjs"
   }
 }
