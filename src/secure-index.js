@@ -42,10 +42,18 @@ const ALLOWED_ALERT_TYPES = new Set(['initial', 'update', 'resolved', 'monthly-t
 
 const text = value => value == null ? '' : String(value).trim();
 const normalizePhone = value => {
-  let v = text(value);
-  if (!v) return '';
-  v = v.replace(/[\s()-]/g, '');
+  let raw = text(value);
+  if (!raw) return '';
+
+  // Normalise copy/paste variants (NBSP, Unicode punctuation/full-width chars)
+  // and retain only a single leading + plus digits.
+  raw = raw.normalize('NFKC').replace(/\u00A0/g, ' ');
+  const hadLeadingPlus = /^\s*\+/.test(raw);
+  let digits = raw.replace(/\D/g, '');
+  let v = hadLeadingPlus ? `+${digits}` : digits;
+
   if (v.startsWith('00')) v = `+${v.slice(2)}`;
+  if (/^\+3530[1-9]/.test(v)) v = `+353${v.slice(5)}`;
   if (/^0[1-9][0-9]{7,9}$/.test(v)) v = `+353${v.slice(1)}`;
   return v;
 };
@@ -243,7 +251,17 @@ async function sanitizeFreshInstallAdminData(result) {
 const originalDefine = Resolver.prototype.define;
 Resolver.prototype.define = function hardenedDefine(key, fn) {
   return originalDefine.call(this, key, async request => {
-    validateResolverPayload(key, request?.payload || {});
+    const payload = request?.payload || {};
+
+    // The admin API intentionally does not return raw mobile numbers. When an
+    // existing contact is edited and the mobile field is left blank, preserve
+    // the securely stored number instead of treating blank as a replacement.
+    if (key === 'saveContact' && payload.id && !text(payload.mobile)) {
+      const existing = await kvs.getSecret(`system-alert:contact:${payload.id}`);
+      if (existing?.mobile) payload.mobile = existing.mobile;
+    }
+
+    validateResolverPayload(key, payload);
     if (ADMIN_RESOLVERS.has(key)) await requireJiraAdmin();
     if (LICENSED_DELIVERY_RESOLVERS.has(key)) requireActiveLicence(request?.context || {});
     let result = await fn(request);
