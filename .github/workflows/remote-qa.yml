@@ -1,5 +1,6 @@
 name: Remote Forge QA
 
+# Validate every code change before Marketplace release.
 on:
   push:
   pull_request:
