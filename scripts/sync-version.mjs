@@ -20,9 +20,18 @@ for (const target of sourceTargets) {
   if (updated !== source) await writeFile(target, updated, 'utf8');
 }
 
+// The setup wizard previously carried separate hard-coded version labels.
+// Keep all visible wizard labels aligned with the release VERSION too.
+const wizardTarget = new URL('../static/admin/src/setup-wizard.js', import.meta.url);
+const wizardSource = await readFile(wizardTarget, 'utf8');
+const wizardUpdated = wizardSource.replace(/v\d+\.\d+\.\d+/g, `v${version}`);
+if (wizardUpdated !== wizardSource) await writeFile(wizardTarget, wizardUpdated, 'utf8');
+
 const packageTargets = [
   new URL('../package.json', import.meta.url),
-  new URL('../static/admin/package.json', import.meta.url)
+  new URL('../static/admin/package.json', import.meta.url),
+  new URL('../static/alert/package.json', import.meta.url),
+  new URL('../static/panel/package.json', import.meta.url)
 ];
 
 for (const target of packageTargets) {
