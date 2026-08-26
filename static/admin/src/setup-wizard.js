@@ -39,7 +39,7 @@ function attachHeaderButton(){
   btn.textContent = 'Setup guide';
   btn.onclick = openWizard;
 
-  version.textContent = 'v3.9.7';
+  version.textContent = 'v3.9.8';
   hero.replaceChild(actions, version);
   actions.appendChild(btn);
   actions.appendChild(version);
@@ -113,7 +113,7 @@ function render(){
   let root=byId('samSetupRoot');
   if(!state.open){ if(root)root.remove(); return; }
   if(!root){ root=document.createElement('div'); root.id='samSetupRoot'; document.body.appendChild(root); }
-  root.innerHTML=`<div class="sam-w-backdrop"><div class="sam-w-dialog"><header><div><span class="sam-w-kicker">SYSTEM ALERT MANAGER · v3.9.7</span><h1>Setup guide</h1></div><button id="samWClose" type="button">×</button></header><div class="sam-w-progress">${steps.map((x,i)=>`<button type="button" data-w-step="${i}" class="${i===state.step?'active':''} ${i<state.step?'done':''}"><span>${i===0?'•':i}</span>${esc(x)}</button>`).join('')}</div>${state.error?`<div class="sam-w-alert error">${esc(state.error)}</div>`:''}${state.message?`<div class="sam-w-alert success">${esc(state.message)}</div>`:''}<main>${body()}</main><footer><button id="samWBack" class="sam-w-secondary" type="button" ${state.step===0?'disabled':''}>Back</button><div><button id="samWExit" class="sam-w-secondary" type="button">Continue to admin</button>${state.step<steps.length-1?'<button id="samWNext" class="sam-w-primary" type="button">Save & continue</button>':'<button id="samWFinish" class="sam-w-primary" type="button">Finish setup</button>'}</div></footer></div></div>`;
+  root.innerHTML=`<div class="sam-w-backdrop"><div class="sam-w-dialog"><header><div><span class="sam-w-kicker">SYSTEM ALERT MANAGER · v3.9.8</span><h1>Setup guide</h1></div><button id="samWClose" type="button">×</button></header><div class="sam-w-progress">${steps.map((x,i)=>`<button type="button" data-w-step="${i}" class="${i===state.step?'active':''} ${i<state.step?'done':''}"><span>${i===0?'•':i}</span>${esc(x)}</button>`).join('')}</div>${state.error?`<div class="sam-w-alert error">${esc(state.error)}</div>`:''}${state.message?`<div class="sam-w-alert success">${esc(state.message)}</div>`:''}<main>${body()}</main><footer><button id="samWBack" class="sam-w-secondary" type="button" ${state.step===0?'disabled':''}>Back</button><div><button id="samWExit" class="sam-w-secondary" type="button">Continue to admin</button>${state.step<steps.length-1?'<button id="samWNext" class="sam-w-primary" type="button">Save & continue</button>':'<button id="samWFinish" class="sam-w-primary" type="button">Finish setup</button>'}</div></footer></div></div>`;
   bind();
 }
 
