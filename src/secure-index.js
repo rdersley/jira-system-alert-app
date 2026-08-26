@@ -35,12 +35,20 @@ const LICENSED_DELIVERY_RESOLVERS = new Set([
 ]);
 
 const EMAIL_RE = /^[^@\s]{1,64}@[^@\s]{1,190}\.[^@\s]{2,63}$/;
-const PHONE_RE = /^\+?[0-9][0-9 ()-]{5,28}[0-9]$/;
+const PHONE_RE = /^\+[1-9][0-9]{7,14}$/;
 const ISSUE_KEY_RE = /^[A-Z][A-Z0-9_]{0,29}-[1-9][0-9]*$/i;
 const SAFE_ID_RE = /^[A-Za-z0-9_.:-]{1,160}$/;
 const ALLOWED_ALERT_TYPES = new Set(['initial', 'update', 'resolved', 'monthly-test']);
 
 const text = value => value == null ? '' : String(value).trim();
+const normalizePhone = value => {
+  let v = text(value);
+  if (!v) return '';
+  v = v.replace(/[\s()-]/g, '');
+  if (v.startsWith('00')) v = `+${v.slice(2)}`;
+  if (/^0[1-9][0-9]{7,9}$/.test(v)) v = `+353${v.slice(1)}`;
+  return v;
+};
 const assertLength = (value, max, label) => {
   if (text(value).length > max) throw new Error(`${label} is too long (maximum ${max} characters).`);
 };
@@ -49,8 +57,9 @@ const assertEmail = (value, label = 'Email address') => {
   if (v && (v.length > 254 || !EMAIL_RE.test(v))) throw new Error(`${label} is not valid.`);
 };
 const assertPhone = (value, label = 'Mobile number') => {
-  const v = text(value);
-  if (v && !PHONE_RE.test(v)) throw new Error(`${label} is not valid. Use an international number such as +353...`);
+  const v = normalizePhone(value);
+  if (v && !PHONE_RE.test(v)) throw new Error(`${label} is not valid. Enter an international number such as +353871234567, or an Irish mobile such as 0871234567.`);
+  return v;
 };
 const assertIssueKey = value => {
   if (!ISSUE_KEY_RE.test(text(value))) throw new Error('Invalid Jira issue key.');
@@ -147,7 +156,7 @@ function validateResolverPayload(key, payload = {}) {
       assertLength(payload.name, 120, 'Contact name');
       if (!text(payload.name)) throw new Error('Contact name is required.');
       assertEmail(payload.email);
-      assertPhone(payload.mobile);
+      payload.mobile = assertPhone(payload.mobile);
       if (payload.emailAlerts === true && !text(payload.email)) throw new Error('An email address is required when Email alerts are enabled.');
       if (payload.smsAlerts === true && !text(payload.mobile)) throw new Error('A mobile number is required when SMS alerts are enabled.');
       if (payload.priorities != null && (!Array.isArray(payload.priorities) || payload.priorities.length > 20)) throw new Error('Invalid contact priority selection.');
@@ -172,7 +181,7 @@ function validateResolverPayload(key, payload = {}) {
       assertEmail(payload.sendgridReplyToEmail, 'SendGrid reply-to email');
       assertEmail(payload.microsoftSenderMailbox, 'Microsoft sender mailbox');
       assertEmail(payload.microsoftReplyToEmail, 'Microsoft reply-to email');
-      assertPhone(payload.twilioFromNumber, 'Twilio from number');
+      if (text(payload.twilioFromNumber)) payload.twilioFromNumber = assertPhone(payload.twilioFromNumber, 'Twilio from number');
       for (const [field, max] of [['microsoftTenantId',100],['microsoftClientId',100],['twilioMessagingServiceSid',80],['sendgridFromName',80],['microsoftFromName',80]]) assertLength(payload[field], max, field);
       break;
     case 'saveMicrosoftMarketplaceSettings':
