@@ -1,6 +1,6 @@
 {
   "name": "system-alert-custom-ui",
-  "version": "3.9.5",
+  "version": "3.9.8",
   "private": true,
   "type": "module",
   "scripts": {
@@ -8,9 +8,9 @@
     "dev": "vite"
   },
   "dependencies": {
-    "@forge/bridge": "^6.0.0"
+    "@forge/bridge": "6.3.0"
   },
   "devDependencies": {
-    "vite": "^7.0.0"
+    "vite": "^7.3.6"
   }
 }
