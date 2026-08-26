@@ -49,25 +49,20 @@ jobs:
         shell: bash
         run: |
           if [ -f package-lock.json ]; then npm ci; else npm install; fi
+      - name: Audit root dependencies
+        if: hashFiles('package.json') != ''
+        run: npm audit --audit-level=high
       - name: Run root tests when defined
         if: hashFiles('package.json') != ''
         shell: bash
         run: |
-          if node -e "const p=require('./package.json');process.exit(p.scripts&&p.scripts.test?0:1)"; then
-            npm test
-          else
-            echo "No root test script; skipping"
-          fi
+          if node -e "const p=require('./package.json');process.exit(p.scripts&&p.scripts.test?0:1)"; then npm test; else echo "No root test script; skipping"; fi
       - name: Run root build when defined
         if: hashFiles('package.json') != ''
         shell: bash
         run: |
-          if node -e "const p=require('./package.json');process.exit(p.scripts&&p.scripts.build?0:1)"; then
-            npm run build
-          else
-            echo "No root build script; skipping"
-          fi
-      - name: Build Custom UI resources
+          if node -e "const p=require('./package.json');process.exit(p.scripts&&p.scripts.build?0:1)"; then npm run build; else echo "No root build script; skipping"; fi
+      - name: Build and audit Custom UI resources
         shell: bash
         run: |
           if [ -d static ]; then
@@ -76,11 +71,8 @@ jobs:
               if [ -f "$dir/package.json" ]; then
                 echo "Building $dir"
                 if [ -f "$dir/package-lock.json" ]; then npm --prefix "$dir" ci; else npm --prefix "$dir" install; fi
-                if node -e "const p=require('./$dir/package.json');process.exit(p.scripts&&p.scripts.build?0:1)"; then
-                  npm --prefix "$dir" run build
-                else
-                  echo "No build script in $dir; skipping"
-                fi
+                npm --prefix "$dir" audit --audit-level=high
+                if node -e "const p=require('./$dir/package.json');process.exit(p.scripts&&p.scripts.build?0:1)"; then npm --prefix "$dir" run build; else echo "No build script in $dir; skipping"; fi
               fi
             done
           fi
@@ -88,10 +80,7 @@ jobs:
         if: steps.detect.outputs.forge_app == 'true'
         shell: bash
         run: |
-          if [ -z "$FORGE_EMAIL" ] || [ -z "$FORGE_API_TOKEN" ]; then
-            echo "Forge secrets are not configured for this repository; skipping Forge lint."
-            exit 0
-          fi
+          if [ -z "$FORGE_EMAIL" ] || [ -z "$FORGE_API_TOKEN" ]; then echo "Forge secrets are not configured for this repository; skipping Forge lint."; exit 0; fi
           npm install --global @forge/cli
           forge settings set usage-analytics false
           forge settings set default-environment development
@@ -119,10 +108,11 @@ jobs:
         shell: bash
         run: |
           if [ -f package-lock.json ]; then npm ci; elif [ -f package.json ]; then npm install; fi
+          npm audit --audit-level=high
           npm install --global @forge/cli
           forge settings set usage-analytics false
           forge settings set default-environment "${{ inputs.environment }}"
-      - name: Build Custom UI resources
+      - name: Build and audit Custom UI resources
         shell: bash
         run: |
           if [ -d static ]; then
@@ -130,6 +120,7 @@ jobs:
               [ -d "$dir" ] || continue
               if [ -f "$dir/package.json" ]; then
                 if [ -f "$dir/package-lock.json" ]; then npm --prefix "$dir" ci; else npm --prefix "$dir" install; fi
+                npm --prefix "$dir" audit --audit-level=high
                 if node -e "const p=require('./$dir/package.json');process.exit(p.scripts&&p.scripts.build?0:1)"; then npm --prefix "$dir" run build; fi
               fi
             done
@@ -144,10 +135,7 @@ jobs:
           JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
         shell: bash
         run: |
-          if [ -z "$JIRA_EMAIL" ] || [ -z "$JIRA_API_TOKEN" ]; then
-            echo "JIRA_EMAIL/JIRA_API_TOKEN not configured; skipping REST smoke check"
-            exit 0
-          fi
+          if [ -z "$JIRA_EMAIL" ] || [ -z "$JIRA_API_TOKEN" ]; then echo "JIRA_EMAIL/JIRA_API_TOKEN not configured; skipping REST smoke check"; exit 0; fi
           code=$(curl -sS -o /tmp/project.json -w "%{http_code}" -u "$JIRA_EMAIL:$JIRA_API_TOKEN" "https://${{ inputs.site }}/rest/api/3/project/TEST")
           test "$code" = "200" || (cat /tmp/project.json && exit 1)
           echo "Sandbox TEST project reachable"
