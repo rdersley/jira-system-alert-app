@@ -8,16 +8,19 @@ function contactForm() {
 }
 
 function normalizePhone(value = '') {
-  let v = String(value || '').trim();
-  if (!v) return '';
+  let raw = String(value || '').trim();
+  if (!raw) return '';
 
-  // Remove common display punctuation while retaining a leading +.
-  v = v.replace(/[\s().-]/g, '');
+  // Copying from Outlook, Teams, Excel and address books can introduce NBSP,
+  // Unicode dashes and other formatting. Convert those safely before checking.
+  raw = raw.normalize('NFKC').replace(/\u00A0/g, ' ');
+  const hadLeadingPlus = /^\s*\+/.test(raw);
+  const digits = raw.replace(/\D/g, '');
+  let v = hadLeadingPlus ? `+${digits}` : digits;
+
   if (v.startsWith('00')) v = `+${v.slice(2)}`;
-
-  // Common Irish formats: 087..., +353(0)87..., +353087...
+  if (/^\+3530[1-9]/.test(v)) v = `+353${v.slice(5)}`;
   if (/^0[1-9][0-9]{7,9}$/.test(v)) v = `+353${v.slice(1)}`;
-  if (v.startsWith('+3530')) v = `+353${v.slice(5)}`;
 
   return v;
 }
