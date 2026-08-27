@@ -1,0 +1,53 @@
+name: Deployed UI Tests
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [master]
+
+jobs:
+  playwright:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
+      JIRA_TEST_ISSUE_KEY: ${{ secrets.JIRA_TEST_ISSUE_KEY }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Restore compressed Jira authenticated browser state
+        shell: bash
+        env:
+          JIRA_STORAGE_STATE_GZIP_B64: ${{ secrets.JIRA_STORAGE_STATE_GZIP_B64 }}
+        run: |
+          mkdir -p .auth
+          test -n "$JIRA_STORAGE_STATE_GZIP_B64"
+          printf '%s' "$JIRA_STORAGE_STATE_GZIP_B64" | base64 --decode | gzip --decompress > .auth/jira.json
+          test -s .auth/jira.json
+          node -e "JSON.parse(require('fs').readFileSync('.auth/jira.json','utf8')); console.log('Jira browser state restored and valid JSON')"
+
+      - name: Run deployed UI tests
+        run: npm run e2e
+
+      - name: Upload Playwright evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-evidence
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 14
