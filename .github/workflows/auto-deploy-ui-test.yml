@@ -47,7 +47,7 @@ jobs:
       - name: Install dependencies
         shell: bash
         run: |
-          if [ -f package-lock.json ]; then npm ci; else npm install; fi
+          npm install
           npm audit --audit-level=high
 
       - name: Build app when defined
