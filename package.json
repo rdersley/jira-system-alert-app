@@ -8,10 +8,16 @@
     "@forge/kvs": "2.0.0",
     "@forge/resolver": "2.0.0"
   },
+  "devDependencies": {
+    "@playwright/test": "^1.55.0"
+  },
   "scripts": {
     "prepare": "node scripts/sync-version.mjs",
     "test": "node --test test/*.test.mjs",
     "test:quick": "node --test test/safety.test.mjs",
-    "sync:version": "node scripts/sync-version.mjs"
+    "sync:version": "node scripts/sync-version.mjs",
+    "e2e": "playwright test",
+    "e2e:headed": "playwright test --headed",
+    "e2e:debug": "playwright test --debug"
   }
 }
