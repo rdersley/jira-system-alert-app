@@ -1,9 +1,7 @@
-name: Deployed UI Tests
+name: Manual Deployed UI Test
 
 on:
   workflow_dispatch:
-  pull_request:
-    branches: [master]
 
 jobs:
   playwright:
