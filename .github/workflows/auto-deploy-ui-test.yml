@@ -15,7 +15,7 @@ permissions:
 jobs:
   deploy-and-test:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     env:
       FORGE_EMAIL: ${{ secrets.FORGE_EMAIL }}
       FORGE_API_TOKEN: ${{ secrets.FORGE_API_TOKEN }}
@@ -75,13 +75,48 @@ jobs:
       - name: Deploy to Nuvriqo development
         run: forge deploy --environment "$FORGE_ENVIRONMENT" --non-interactive
 
-      - name: Upgrade development installation
+      - name: Ensure development installation
         shell: bash
         run: |
-          if ! forge install --upgrade --site "$FORGE_SITE" --product jira --environment "$FORGE_ENVIRONMENT" --confirm-scopes --non-interactive; then
-            echo "Upgrade was unavailable; attempting first development install"
-            forge install --site "$FORGE_SITE" --product jira --environment "$FORGE_ENVIRONMENT" --confirm-scopes --non-interactive
-          fi
+          set +e
+          for attempt in 1 2 3 4; do
+            echo "Forge install/upgrade attempt $attempt of 4"
+
+            forge install --upgrade --site "$FORGE_SITE" --product jira --environment "$FORGE_ENVIRONMENT" --confirm-scopes --non-interactive > /tmp/forge-install.log 2>&1
+            upgrade_status=$?
+            cat /tmp/forge-install.log
+            if [ "$upgrade_status" -eq 0 ]; then
+              echo "Development installation upgraded successfully"
+              exit 0
+            fi
+
+            if grep -qi "Could not find an installation" /tmp/forge-install.log; then
+              forge install --site "$FORGE_SITE" --product jira --environment "$FORGE_ENVIRONMENT" --confirm-scopes --non-interactive > /tmp/forge-first-install.log 2>&1
+              install_status=$?
+              cat /tmp/forge-first-install.log
+              if [ "$install_status" -eq 0 ]; then
+                echo "Development installation created successfully"
+                exit 0
+              fi
+              if grep -qi "conflicts with another pending or in progress task" /tmp/forge-first-install.log; then
+                echo "Atlassian installation task is busy; waiting before retry"
+                sleep 30
+                continue
+              fi
+              exit "$install_status"
+            fi
+
+            if grep -qi "conflicts with another pending or in progress task" /tmp/forge-install.log; then
+              echo "Atlassian installation task is busy; waiting before retry"
+              sleep 30
+              continue
+            fi
+
+            exit "$upgrade_status"
+          done
+
+          echo "Forge installation remained busy after retries"
+          exit 1
 
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
