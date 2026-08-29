@@ -11,9 +11,7 @@ on:
         description: BrowserStack browser
         required: true
         type: choice
-        options:
-          - chrome
-          - edge
+        options: [chrome, edge]
         default: chrome
 
 permissions:
@@ -28,11 +26,8 @@ jobs:
     name: BrowserStack authenticated smoke
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Use Node.js 22
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 22
 
@@ -40,14 +35,14 @@ jobs:
         env:
           BS_USER: ${{ secrets.BROWSERSTACK_USERNAME }}
           BS_KEY: ${{ secrets.BROWSERSTACK_ACCESS_KEY }}
-          QA_BASE_URL: ${{ secrets.BASE_URL }}
-          STORAGE_STATE_GZIP: ${{ secrets.STORAGE_STATE_GZIP }}
+          QA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
+          STORAGE_STATE_GZIP: ${{ secrets.JIRA_STORAGE_STATE_GZIP_B64 }}
         shell: bash
         run: |
           test -n "$BS_USER" || (echo "Missing BROWSERSTACK_USERNAME" && exit 1)
           test -n "$BS_KEY" || (echo "Missing BROWSERSTACK_ACCESS_KEY" && exit 1)
-          test -n "$QA_BASE_URL" || (echo "Missing BASE_URL" && exit 1)
-          test -n "$STORAGE_STATE_GZIP" || (echo "Missing STORAGE_STATE_GZIP" && exit 1)
+          test -n "$QA_BASE_URL" || (echo "Missing JIRA_BASE_URL" && exit 1)
+          test -n "$STORAGE_STATE_GZIP" || (echo "Missing JIRA_STORAGE_STATE_GZIP_B64" && exit 1)
 
       - name: BrowserStack environment
         uses: browserstack/github-actions/setup-env@master
@@ -62,14 +57,13 @@ jobs:
 
       - name: Restore Jira authentication state
         env:
-          STORAGE_STATE_GZIP: ${{ secrets.STORAGE_STATE_GZIP }}
+          STORAGE_STATE_GZIP: ${{ secrets.JIRA_STORAGE_STATE_GZIP_B64 }}
         shell: bash
         run: |
           mkdir -p qa/.auth
           python - <<'PY'
           import os, base64, gzip, pathlib
-          value = os.environ['STORAGE_STATE_GZIP'].strip()
-          raw = base64.b64decode(value)
+          raw = base64.b64decode(os.environ['STORAGE_STATE_GZIP'].strip())
           try:
               raw = gzip.decompress(raw)
           except OSError:
@@ -79,7 +73,7 @@ jobs:
 
       - name: Run BrowserStack UI smoke
         env:
-          QA_BASE_URL: ${{ secrets.BASE_URL }}
+          QA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
           QA_PATH: ${{ inputs.path }}
           QA_BROWSER: ${{ inputs.browser }}
           QA_SESSION_NAME: ${{ github.repository }} authenticated Jira smoke
