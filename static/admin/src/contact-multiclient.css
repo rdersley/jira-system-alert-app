@@ -1,0 +1,9 @@
+.sam-original-client-select{display:none!important}
+.sam-client-picker{border:1px solid #dfe1e6;border-radius:8px;padding:12px;background:#fafbfc}
+.sam-client-picker-actions{margin:8px 0 10px;font-weight:600}
+.sam-client-options{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px 14px}
+.sam-client-options label{display:flex;gap:8px;align-items:center;padding:7px 9px;border:1px solid #dfe1e6;border-radius:6px;background:#fff}
+#contactsHost .client-group-head{cursor:pointer;user-select:none;display:flex;align-items:center;gap:8px}
+#contactsHost .client-group-head:focus{outline:2px solid #0c66e4;outline-offset:2px}
+#contactsHost .client-group-head .sam-collapse-marker{width:14px;display:inline-block;color:#44546f}
+#contactsHost .client-group.sam-collapsed .contact-card{display:none}
