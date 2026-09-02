@@ -1,17 +1,27 @@
 .sam-original-client-select{display:none!important}
 .sam-client-picker{border:1px solid #dfe1e6;border-radius:10px;padding:14px;background:#fafbfc}
-.sam-client-picker-toolbar{display:flex;gap:12px;align-items:center;justify-content:space-between;margin:10px 0 12px;flex-wrap:wrap}
-.sam-client-search{flex:1 1 260px;min-height:40px;border:1px solid #b6bfcc;border-radius:6px;background:#fff;padding:8px 10px}
-.sam-client-picker-actions{display:flex;gap:12px;align-items:center;font-weight:600;flex-wrap:wrap}
-.sam-client-clear{border:0;background:transparent;color:#0c66e4;font:inherit;font-weight:600;cursor:pointer;padding:5px 2px}
-.sam-selected-count{color:#44546f;font-size:12px;white-space:nowrap}
-.sam-client-options{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:7px 10px;max-height:300px;overflow:auto;padding:4px;border-top:1px solid #dfe1e6}
-.sam-client-options label{display:flex;gap:8px;align-items:center;padding:8px 9px;border:1px solid #dfe1e6;border-radius:6px;background:#fff;min-height:38px}
-.sam-client-options label.selected{border-color:#85b8ff;background:#f0f7ff}
-.sam-client-options label[hidden]{display:none!important}
-.sam-client-empty{margin:10px 0 0;color:#626f86;font-size:13px}
+.sam-client-combobox{position:relative;margin-top:10px}
+.sam-client-search-row{display:flex;gap:12px;align-items:center}
+.sam-client-search{flex:1;min-height:40px;border:1px solid #b6bfcc;border-radius:6px;background:#fff;padding:8px 10px;font:inherit}
+.sam-client-search:focus{border-color:#0c66e4;outline:2px solid #cce0ff;outline-offset:0}
+.sam-all-clients-toggle{display:flex;align-items:center;gap:7px;white-space:nowrap;font-weight:600;color:#172b4d;padding:8px 10px;border:1px solid #dfe1e6;border-radius:6px;background:#fff}
+.sam-client-results{position:absolute;z-index:20;left:0;right:150px;top:46px;background:#fff;border:1px solid #b6bfcc;border-radius:8px;box-shadow:0 8px 24px rgba(9,30,66,.18);max-height:300px;overflow:auto;padding:5px}
+.sam-client-result{width:100%;display:flex;justify-content:space-between;align-items:center;gap:12px;border:0;background:#fff;text-align:left;padding:9px 10px;border-radius:5px;cursor:pointer;color:#172b4d;font:inherit}
+.sam-client-result:hover,.sam-client-result:focus{background:#f1f2f4;outline:none}
+.sam-result-add{font-size:12px;font-weight:700;color:#0c66e4}
+.sam-client-no-results{padding:12px;color:#626f86;font-size:13px}
+.sam-selection-summary{margin-top:12px;border:1px solid #dfe1e6;background:#fff;border-radius:8px;padding:11px 12px}
+.sam-selected-heading{display:flex;align-items:center;gap:8px;color:#44546f;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.02em}
+.sam-selected-count{display:inline-flex;align-items:center;justify-content:center;min-width:22px;height:22px;padding:0 6px;border-radius:999px;background:#e9f2ff;color:#0c66e4;font-size:12px}
+.sam-selected-chips{display:flex;flex-wrap:wrap;gap:7px;margin-top:9px}
+.sam-selected-empty{color:#626f86;font-size:13px}
+.sam-client-chip{display:inline-flex;align-items:center;gap:7px;border:1px solid #b6bfcc;background:#f7f8f9;border-radius:999px;padding:5px 9px;color:#172b4d;cursor:pointer;font:inherit;font-size:13px}
+.sam-client-chip:hover{background:#e9f2ff;border-color:#85b8ff}
+.sam-client-chip span:last-child{font-size:16px;line-height:1;color:#626f86}
+.sam-client-clear{margin-top:10px;border:0;background:transparent;color:#0c66e4;font:inherit;font-weight:600;cursor:pointer;padding:2px 0}
+.sam-client-checkbox-store{display:none!important}
 #contactsHost .client-group-head{cursor:pointer;user-select:none;display:flex;align-items:center;gap:8px}
 #contactsHost .client-group-head:focus{outline:2px solid #0c66e4;outline-offset:2px}
 #contactsHost .client-group-head .sam-collapse-marker{width:14px;display:inline-block;color:#44546f}
 #contactsHost .client-group.sam-collapsed .contact-card{display:none}
-@media(max-width:760px){.sam-client-options{grid-template-columns:1fr;max-height:260px}.sam-client-picker-toolbar{align-items:stretch}.sam-client-picker-actions{justify-content:space-between}}
+@media(max-width:760px){.sam-client-search-row{align-items:stretch;flex-direction:column}.sam-client-results{right:0;top:92px}.sam-all-clients-toggle{width:max-content}}
