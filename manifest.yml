@@ -2,7 +2,7 @@ modules:
   scheduledTrigger:
     - key: monthly-system-alert-test
       function: monthly-test-scheduler
-      interval: hour
+      interval: fiveMinute
   jira:issueAction:
     - key: system-alert-send
       resource: alert-ui-custom
