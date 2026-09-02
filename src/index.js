@@ -22,7 +22,7 @@ const PROVIDER_SECRET_KEYS = {
   twilioApiSecret: 'system-alert:provider:twilio-api-secret',
   microsoftClientSecret: 'system-alert:provider:microsoft-client-secret'
 };
-const APP_VERSION = '3.10.1';
+const APP_VERSION = '3.10.2';
 
 const DEFAULT_SETTINGS = {
   clientFieldId: '',
