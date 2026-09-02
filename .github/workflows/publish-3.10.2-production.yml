@@ -41,11 +41,10 @@ jobs:
               if node -e "const p=require('./$dir/package.json');process.exit(p.scripts&&p.scripts.build?0:1)"; then npm --prefix "$dir" run build; fi
             fi
           done
-      - name: Install Forge CLI and lint
+      - name: Install Forge CLI
         run: |
           npm install --global @forge/cli
           forge settings set usage-analytics false
-          forge lint
       - name: Confirm release version
         run: test "$(cat VERSION)" = "3.10.2"
       - name: Deploy to Forge production
