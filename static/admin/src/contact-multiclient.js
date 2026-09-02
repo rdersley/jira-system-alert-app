@@ -4,7 +4,7 @@ import './contact-multiclient.css';
 const collapsedGroups = new Set();
 
 function esc(value='') {
-  return String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  return String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot',"'":'&#39;'}[c]));
 }
 
 function isEditForm(form) {
@@ -27,19 +27,49 @@ function enhanceClientPicker() {
 
   const wrapper = document.createElement('div');
   wrapper.className = 'field wide sam-client-picker';
-  wrapper.innerHTML = `<label>Clients</label><p class="help">Assign this contact to one, several, or all currently configured clients.</p><div class="sam-client-picker-actions"><label><input type="checkbox" id="samAllClients"> All clients</label></div><div class="sam-client-options">${options.map(o => `<label><input class="sam-client-assignment" type="checkbox" value="${esc(o.value)}"> <span>${esc(o.textContent)}</span></label>`).join('')}</div>`;
+  wrapper.innerHTML = `<label>Clients</label>
+    <p class="help">Search and select one or more clients. The list stays compact even when the Jira Client field contains many options.</p>
+    <div class="sam-client-picker-toolbar">
+      <input id="samClientSearch" class="sam-client-search" type="search" placeholder="Search clients…" autocomplete="off">
+      <div class="sam-client-picker-actions"><label><input type="checkbox" id="samAllClients"> All clients</label><button type="button" class="sam-client-clear">Clear</button><strong class="sam-selected-count">0 selected</strong></div>
+    </div>
+    <div class="sam-client-options" role="group" aria-label="Available clients">${options.map(o => `<label data-search="${esc(o.textContent.toLowerCase())}"><input class="sam-client-assignment" type="checkbox" value="${esc(o.value)}"> <span>${esc(o.textContent)}</span></label>`).join('')}</div>
+    <p class="sam-client-empty" hidden>No clients match your search.</p>`;
   select.closest('.field')?.after(wrapper);
 
   const boxes = [...wrapper.querySelectorAll('.sam-client-assignment')];
+  const labels = [...wrapper.querySelectorAll('.sam-client-options label')];
   const all = wrapper.querySelector('#samAllClients');
+  const search = wrapper.querySelector('#samClientSearch');
+  const count = wrapper.querySelector('.sam-selected-count');
+  const clear = wrapper.querySelector('.sam-client-clear');
+  const empty = wrapper.querySelector('.sam-client-empty');
+
   const syncOriginal = () => {
     const chosen = boxes.filter(x => x.checked);
     select.value = chosen[0]?.value || '';
     all.checked = chosen.length === boxes.length && boxes.length > 0;
     all.indeterminate = chosen.length > 0 && chosen.length < boxes.length;
+    count.textContent = `${chosen.length} selected`;
+    labels.forEach(label => label.classList.toggle('selected', Boolean(label.querySelector('input')?.checked)));
   };
+
+  const applyFilter = () => {
+    const q = (search.value || '').trim().toLowerCase();
+    let visible = 0;
+    labels.forEach(label => {
+      const match = !q || label.dataset.search.includes(q);
+      label.hidden = !match;
+      if (match) visible += 1;
+    });
+    empty.hidden = visible > 0;
+  };
+
   all.addEventListener('change', () => { boxes.forEach(x => { x.checked = all.checked; }); syncOriginal(); });
   boxes.forEach(x => x.addEventListener('change', syncOriginal));
+  search.addEventListener('input', applyFilter);
+  clear.addEventListener('click', () => { boxes.forEach(x => { x.checked = false; }); syncOriginal(); search.value = ''; applyFilter(); search.focus(); });
+
   if (select.value) {
     const current = boxes.find(x => x.value === select.value);
     if (current) current.checked = true;

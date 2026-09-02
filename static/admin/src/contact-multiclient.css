@@ -1,9 +1,17 @@
 .sam-original-client-select{display:none!important}
-.sam-client-picker{border:1px solid #dfe1e6;border-radius:8px;padding:12px;background:#fafbfc}
-.sam-client-picker-actions{margin:8px 0 10px;font-weight:600}
-.sam-client-options{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px 14px}
-.sam-client-options label{display:flex;gap:8px;align-items:center;padding:7px 9px;border:1px solid #dfe1e6;border-radius:6px;background:#fff}
+.sam-client-picker{border:1px solid #dfe1e6;border-radius:10px;padding:14px;background:#fafbfc}
+.sam-client-picker-toolbar{display:flex;gap:12px;align-items:center;justify-content:space-between;margin:10px 0 12px;flex-wrap:wrap}
+.sam-client-search{flex:1 1 260px;min-height:40px;border:1px solid #b6bfcc;border-radius:6px;background:#fff;padding:8px 10px}
+.sam-client-picker-actions{display:flex;gap:12px;align-items:center;font-weight:600;flex-wrap:wrap}
+.sam-client-clear{border:0;background:transparent;color:#0c66e4;font:inherit;font-weight:600;cursor:pointer;padding:5px 2px}
+.sam-selected-count{color:#44546f;font-size:12px;white-space:nowrap}
+.sam-client-options{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:7px 10px;max-height:300px;overflow:auto;padding:4px;border-top:1px solid #dfe1e6}
+.sam-client-options label{display:flex;gap:8px;align-items:center;padding:8px 9px;border:1px solid #dfe1e6;border-radius:6px;background:#fff;min-height:38px}
+.sam-client-options label.selected{border-color:#85b8ff;background:#f0f7ff}
+.sam-client-options label[hidden]{display:none!important}
+.sam-client-empty{margin:10px 0 0;color:#626f86;font-size:13px}
 #contactsHost .client-group-head{cursor:pointer;user-select:none;display:flex;align-items:center;gap:8px}
 #contactsHost .client-group-head:focus{outline:2px solid #0c66e4;outline-offset:2px}
 #contactsHost .client-group-head .sam-collapse-marker{width:14px;display:inline-block;color:#44546f}
 #contactsHost .client-group.sam-collapsed .contact-card{display:none}
+@media(max-width:760px){.sam-client-options{grid-template-columns:1fr;max-height:260px}.sam-client-picker-toolbar{align-items:stretch}.sam-client-picker-actions{justify-content:space-between}}

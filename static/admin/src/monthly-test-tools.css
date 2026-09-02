@@ -1,0 +1,13 @@
+.sam-monthly-tools .sam-monthly-grid{display:grid;grid-template-columns:minmax(240px,1fr) minmax(280px,1.4fr);gap:16px;align-items:start}
+.sam-monthly-tools .sam-monthly-panel{border:1px solid #d8dee8;border-radius:10px;background:#fbfcfe;padding:16px}
+.sam-monthly-tools .sam-monthly-panel h3{margin:0 0 6px;font-size:16px}
+.sam-monthly-tools .sam-monthly-panel p{margin:0 0 12px;color:#626f86;line-height:1.45}
+.sam-monthly-tools select{width:100%;min-height:40px;border:1px solid #b6bfcc;border-radius:6px;background:#fff;padding:7px 9px}
+.sam-monthly-tools .sam-monthly-summary{margin-top:12px;display:grid;gap:6px;font-size:13px;color:#44546f}
+.sam-monthly-tools .sam-monthly-status{display:grid;gap:7px;font-size:13px;color:#44546f}
+.sam-monthly-tools .sam-monthly-status strong{color:#172b4d}
+.sam-monthly-tools .sam-run-row{display:flex;gap:10px;align-items:center;margin-top:14px;flex-wrap:wrap}
+.sam-monthly-tools .sam-run-result{font-size:13px;color:#44546f}
+.sam-monthly-tools .sam-run-result.success{color:#216e4e}
+.sam-monthly-tools .sam-run-result.error{color:#ae2e24}
+@media(max-width:760px){.sam-monthly-tools .sam-monthly-grid{grid-template-columns:1fr}}

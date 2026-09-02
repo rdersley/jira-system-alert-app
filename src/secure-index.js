@@ -22,6 +22,7 @@ const ADMIN_RESOLVERS = new Set([
   'previewTemplate',
   'saveContact',
   'testContact',
+  'runMonthlyTestNow',
   'deleteContact'
 ]);
 
@@ -31,7 +32,8 @@ const ADMIN_RESOLVERS = new Set([
 const LICENSED_DELIVERY_RESOLVERS = new Set([
   'sendAlert',
   'testEmailProvider',
-  'testContact'
+  'testContact',
+  'runMonthlyTestNow'
 ]);
 
 const EMAIL_RE = /^[^@\s]{1,64}@[^@\s]{1,190}\.[^@\s]{2,63}$/;
@@ -168,6 +170,10 @@ function validateResolverPayload(key, payload = {}) {
       if (payload.emailAlerts === true && !text(payload.email)) throw new Error('An email address is required when Email alerts are enabled.');
       if (payload.smsAlerts === true && !text(payload.mobile)) throw new Error('A mobile number is required when SMS alerts are enabled.');
       if (payload.priorities != null && (!Array.isArray(payload.priorities) || payload.priorities.length > 20)) throw new Error('Invalid contact priority selection.');
+      break;
+    case 'runMonthlyTestNow':
+      assertLength(payload.clientCode, 100, 'Client code');
+      if (!text(payload.clientCode)) throw new Error('Choose a client for the monthly test.');
       break;
     case 'testContact':
     case 'deleteContact':
