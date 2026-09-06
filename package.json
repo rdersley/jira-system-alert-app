@@ -12,6 +12,8 @@
     "prepare": "node scripts/sync-version.mjs",
     "test": "node --test test/*.test.mjs",
     "test:quick": "node --test test/safety.test.mjs",
-    "sync:version": "node scripts/sync-version.mjs"
+    "sync:version": "node scripts/sync-version.mjs",
+    "demo:auth": "node qa/capture-auth.mjs",
+    "demo:system-alert": "node qa/record-system-alert-demo.mjs"
   }
 }
