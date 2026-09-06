@@ -1,8 +1,7 @@
 name: Remote Forge QA
 
-# Validate every code change before Marketplace release.
+# Run the full validation suite for pull requests or on demand.
 on:
-  push:
   pull_request:
   workflow_dispatch:
     inputs:
