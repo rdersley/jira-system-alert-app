@@ -40,6 +40,8 @@ build/Release
 
 # Dependency directories
 node_modules/
+qa/.auth/
+qa/artifacts/
 jspm_packages/
 
 # Snowpack dependency directory (https://snowpack.dev/)
@@ -145,4 +147,3 @@ node_modules/
 # Environment/secrets
 .env
 .env.*
-
