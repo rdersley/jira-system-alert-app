@@ -1,7 +1,7 @@
 import { invoke } from '@forge/bridge';
 import './styles.css';
 
-const APP_VERSION = '3.10.2';
+const APP_VERSION = '3.10.3';
 const app = document.querySelector('#app');
 
 const state = {
