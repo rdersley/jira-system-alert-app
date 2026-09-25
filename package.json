@@ -1,6 +1,6 @@
 {
   "name": "system-alert-manager",
-  "version": "3.10.2",
+  "version": "3.10.3",
   "private": true,
   "license": "UNLICENSED",
   "dependencies": {
@@ -10,7 +10,7 @@
   },
   "scripts": {
     "prepare": "node scripts/sync-version.mjs",
-    "test": "node --test test/*.test.mjs",
+    "test": "node --test --experimental-test-module-mocks test/*.test.mjs",
     "test:quick": "node --test test/safety.test.mjs",
     "sync:version": "node scripts/sync-version.mjs"
   }
