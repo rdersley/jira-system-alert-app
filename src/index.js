@@ -22,7 +22,7 @@ const PROVIDER_SECRET_KEYS = {
   twilioApiSecret: 'system-alert:provider:twilio-api-secret',
   microsoftClientSecret: 'system-alert:provider:microsoft-client-secret'
 };
-const APP_VERSION = '3.10.2';
+const APP_VERSION = '3.10.3';
 
 const DEFAULT_SETTINGS = {
   clientFieldId: '',
@@ -570,7 +570,7 @@ resolver.define('saveProviderSettings', async ({ payload }) => {
     microsoftReplyToEmail: normalizeTextValue(payload?.microsoftReplyToEmail).slice(0,254),
     microsoftClientSecretExpiry: /^\d{4}-\d{2}-\d{2}$/.test(normalizeTextValue(payload?.microsoftClientSecretExpiry)) ? normalizeTextValue(payload.microsoftClientSecretExpiry) : '',
     smsProvider: 'twilio',
-    twilioRegion: ['global','us1','au1'].includes(normalizeTextValue(payload?.twilioRegion).toLowerCase()) ? normalizeTextValue(payload.twilioRegion).toLowerCase() : 'global',
+    twilioRegion: ['global','ie1'].includes(normalizeTextValue(payload?.twilioRegion).toLowerCase()) ? normalizeTextValue(payload.twilioRegion).toLowerCase() : 'global',
     twilioFromNumber: normalizeTextValue(payload?.twilioFromNumber).slice(0,40),
     twilioMessagingServiceSid: normalizeTextValue(payload?.twilioMessagingServiceSid).slice(0,80)
   };
@@ -1175,6 +1175,31 @@ async function sendEmail(toEmails, subject, html, text, fromName, replyToEmail='
   return true;
 }
 
+// Email and SMS are delivered independently: an outage on one provider must not
+// stop the other channel reaching the client. `delivered` is false only when
+// nothing reached anyone, so callers can fail loudly (and the scheduler can retry
+// safely) without resending to people who already received the message.
+async function deliverChannels(emailRecipients, smsRecipients, subject, html, text, smsText, settings, branding) {
+  const email = { attempted: emailRecipients.length, ok: false };
+  const sms = { attempted: smsRecipients.length, sent: 0, failed: [] };
+  const failures = [];
+  if (emailRecipients.length) {
+    try {
+      await sendEmail(emailRecipients, subject, html, text, settings.fromName, settings.replyToEmail, branding);
+      email.ok = true;
+    } catch (e) {
+      email.error = String(e?.message || e).slice(0, 500);
+      failures.push(`Email failed: ${email.error.slice(0, 200)}`);
+    }
+  }
+  for (const mobile of smsRecipients) {
+    try { await sendTwilio(mobile, smsText); sms.sent++; }
+    catch (e) { sms.failed.push({ mobile: maskPhone(mobile), error: e.message }); }
+  }
+  if (sms.failed.length) failures.push(`${sms.failed.length} of ${smsRecipients.length} SMS failed: ${String(sms.failed[0].error || '').slice(0, 200)}`);
+  return { email, sms, failures, delivered: email.ok || sms.sent > 0 };
+}
+
 resolver.define('previewEmail', async ({ payload }) => {
   const settings = await getSettings();
   const fields = ['priority','project'];
@@ -1268,26 +1293,20 @@ resolver.define('sendAlert', async ({ payload, context }) => {
     : [];
   if (!emailRecipients.length && !smsRecipients.length) throw new Error('The selected recipients do not have an enabled email or SMS destination for this alert.');
 
-  const results = { email: { attempted: emailRecipients.length, ok: false }, sms: { attempted: smsRecipients.length, sent: 0, failed: [] } };
-  if (emailRecipients.length) {
-    await sendEmail(emailRecipients, subject, html, text, settings.fromName, settings.replyToEmail, branding);
-    results.email.ok = true;
-  }
-
-  const smsText = buildSmsText(a, templates);
-
-  for (const mobile of smsRecipients) {
-    try { await sendTwilio(mobile, smsText); results.sms.sent++; }
-    catch (e) { results.sms.failed.push({ mobile: maskPhone(mobile), error: e.message }); }
-  }
+  const delivery = await deliverChannels(emailRecipients, smsRecipients, subject, html, text, buildSmsText(a, templates), settings, branding);
+  if (!delivery.delivered) throw new Error(`Nothing was sent. ${delivery.failures.join(' ')}`);
+  const results = { email: delivery.email, sms: delivery.sms };
+  const emailSent = results.email.ok ? emailRecipients.length : 0;
 
   const now = new Date().toISOString();
   const entry = {
     at: now,
     alertType: a.alertType,
     priority: a.priority,
-    emailCount: emailRecipients.length,
+    emailCount: emailSent,
+    emailFailed: Boolean(results.email.error),
     smsCount: results.sms.sent,
+    smsFailedCount: results.sms.failed.length,
     senderAccountId: context.accountId || '',
     monthKey: isTest ? monthKey() : undefined,
     monthLabel: isTest ? a.testMonth : undefined
@@ -1303,9 +1322,10 @@ resolver.define('sendAlert', async ({ payload, context }) => {
     await kvs.set(testHistoryKey, [entry, ...testHistory].slice(0, 36));
   }
 
+  const failureNote = delivery.failures.length ? ` | FAILED: ${delivery.failures.join(' ')}` : '';
   const commentText = isTest
-    ? `Monthly System Alert TEST sent — TEST ONLY | ${a.testMonth} | Email: ${emailRecipients.length} recipient(s) | SMS: ${results.sms.sent} recipient(s)`
-    : `System Alert sent — ${a.alertType.toUpperCase()} | Email: ${emailRecipients.length} recipient(s) | SMS: ${results.sms.sent} recipient(s)${a.nextUpdate ? ` | Next update: ${a.nextUpdate}` : ''}`;
+    ? `Monthly System Alert TEST sent — TEST ONLY | ${a.testMonth} | Email: ${emailSent} recipient(s) | SMS: ${results.sms.sent} recipient(s)${failureNote}`
+    : `System Alert sent — ${a.alertType.toUpperCase()} | Email: ${emailSent} recipient(s) | SMS: ${results.sms.sent} recipient(s)${a.nextUpdate ? ` | Next update: ${a.nextUpdate}` : ''}${failureNote}`;
   results.comment = { ok: false };
   try {
     const commentRes = await api.asApp().requestJira(route`/rest/servicedeskapi/request/${a.issueKey}/comment`, {
@@ -1368,29 +1388,23 @@ async function deliverMonthlyTest(clientCode, { automatic = false, now = new Dat
   const text = buildEmailText(a, templates);
   const html = buildEmailHtml(a, templates, branding);
 
-  let emailOk = false;
-  if (emailRecipients.length) {
-    await sendEmail(emailRecipients, subject, html, text, settings.fromName, settings.replyToEmail, branding);
-    emailOk = true;
-  }
-  const smsText = buildSmsText(a, templates);
-  let smsSent = 0;
-  const smsFailed = [];
-  for (const mobile of smsRecipients) {
-    try { await sendTwilio(mobile, smsText); smsSent++; }
-    catch (e) { smsFailed.push({ mobile: maskPhone(mobile), error: e.message }); }
-  }
+  const delivery = await deliverChannels(emailRecipients, smsRecipients, subject, html, text, buildSmsText(a, templates), settings, branding);
+  if (!delivery.delivered) throw new Error(`Nothing was sent. ${delivery.failures.join(' ')}`);
+  const emailOk = delivery.email.ok;
+  const emailCount = emailOk ? emailRecipients.length : 0;
+  const smsSent = delivery.sms.sent;
+  const smsFailedCount = delivery.sms.failed.length;
 
   const entry = {
     at: new Date().toISOString(), automatic, manual: !automatic, alertType: 'monthly-test',
-    clientCode: code, emailCount: emailRecipients.length, emailOk,
-    smsCount: smsSent, smsFailedCount: smsFailed.length,
+    clientCode: code, emailCount, emailOk, emailFailed: Boolean(delivery.email.error),
+    smsCount: smsSent, smsFailedCount,
     monthKey: monthKey(now), monthLabel: label
   };
   const historyKey = `system-alert:test-history:${code}`;
   const history = (await kvs.get(historyKey)) || [];
   await kvs.set(historyKey, [entry, ...history].slice(0, 36));
-  return { clientCode: code, sent: true, automatic, emailCount: emailRecipients.length, smsCount: smsSent, smsFailedCount: smsFailed.length, at: entry.at, monthKey: entry.monthKey, monthLabel: label };
+  return { clientCode: code, sent: true, automatic, emailCount, emailFailed: entry.emailFailed, emailError: delivery.email.error || '', smsCount: smsSent, smsFailedCount, at: entry.at, monthKey: entry.monthKey, monthLabel: label };
 }
 
 resolver.define('runMonthlyTestNow', async ({ payload }) => {
@@ -1443,7 +1457,9 @@ export async function monthlyTestScheduler() {
     await kvs.set(markerKey, { status: 'running', at: now.toISOString() });
     try {
       const sent = await deliverMonthlyTest(clientCode, { automatic: true, now });
-      await kvs.set(markerKey, { status: 'sent', at: sent.at, emailCount: sent.emailCount, smsCount: sent.smsCount, smsFailedCount: sent.smsFailedCount });
+      // Partial channel failures are still marked sent so a later check never
+      // re-delivers to contacts who already received this month's test.
+      await kvs.set(markerKey, { status: 'sent', at: sent.at, emailCount: sent.emailCount, emailFailed: sent.emailFailed, smsCount: sent.smsCount, smsFailedCount: sent.smsFailedCount });
       results.push(sent);
     } catch (e) {
       await kvs.set(markerKey, { status: 'failed', at: new Date().toISOString(), error: e.message });
@@ -1453,9 +1469,10 @@ export async function monthlyTestScheduler() {
 
   const failed = results.filter(r => r.error).length;
   const sent = results.filter(r => r.sent).length;
-  const outcome = failed ? (sent ? 'partial-failure' : 'failed') : (sent ? 'sent' : 'skipped');
-  const reason = failed
-    ? `${failed} client(s) failed; ${sent} client(s) sent.`
+  const channelFailures = results.filter(r => r.sent && (r.emailFailed || r.smsFailedCount)).length;
+  const outcome = failed || channelFailures ? (sent ? 'partial-failure' : 'failed') : (sent ? 'sent' : 'skipped');
+  const reason = failed || channelFailures
+    ? `${failed} client(s) failed; ${sent} client(s) sent${channelFailures ? `, ${channelFailures} with an email or SMS failure` : ''}.`
     : sent
       ? `Monthly test sent for ${sent} client(s).`
       : 'No eligible client required a send on this check.';

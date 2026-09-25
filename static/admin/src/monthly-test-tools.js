@@ -82,9 +82,11 @@ async function enhanceMonthlyTest() {
     result.textContent = 'Sending…';
     try {
       const sent = await invoke('runMonthlyTestNow', { clientCode });
-      result.className = 'sam-run-result success';
-      result.textContent = `Sent: ${Number(sent.emailCount||0)} email · ${Number(sent.smsCount||0)} SMS${Number(sent.smsFailedCount||0) ? ` · ${Number(sent.smsFailedCount)} SMS failed` : ''}`;
-      setTimeout(() => window.location.reload(), 1200);
+      const partial = sent.emailFailed || Number(sent.smsFailedCount||0) > 0;
+      result.className = `sam-run-result ${partial ? 'error' : 'success'}`;
+      result.textContent = `Sent: ${Number(sent.emailCount||0)} email · ${Number(sent.smsCount||0)} SMS${sent.emailFailed ? ` · Email failed: ${sent.emailError || 'provider error'}` : ''}${Number(sent.smsFailedCount||0) ? ` · ${Number(sent.smsFailedCount)} SMS failed` : ''}`;
+      // Leave a partial failure on screen long enough to read before the reload.
+      setTimeout(() => window.location.reload(), partial ? 6000 : 1200);
     } catch (error) {
       result.className = 'sam-run-result error';
       result.textContent = error?.message || String(error);

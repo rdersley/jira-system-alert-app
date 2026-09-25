@@ -72,13 +72,15 @@ function renderResult() {
   const r = state.result;
   const failed = r?.sms?.failed?.length || 0;
   const commentFailed = r?.comment && r.comment.ok === false;
+  const emailFailed = Boolean(r?.email?.error);
   app.innerHTML = `<div class="shell">
     <div class="header"><div><h1>${r?.isTest ? 'Monthly test sent' : 'System alert sent'}</h1><p>${r?.isTest ? 'The scheduled test has been recorded.' : 'The alert has been recorded on the Jira ticket.'}</p></div><div class="version">v${APP_VERSION}</div></div>
-    <div class="notice success">Alert processing completed.</div>
+    <div class="notice ${emailFailed || failed ? 'warn' : 'success'}">${emailFailed || failed ? 'Alert partly sent — review the failures below.' : 'Alert processing completed.'}</div>
     <div class="result-grid">
-      <div class="result-box"><span>Email recipients</span><strong>${r?.email?.attempted || 0}</strong></div>
+      <div class="result-box"><span>Email recipients</span><strong>${r?.email?.ok ? (r.email.attempted || 0) : 0}</strong></div>
       <div class="result-box"><span>SMS sent</span><strong>${r?.sms?.sent || 0}</strong></div>
     </div>
+    ${emailFailed ? `<div class="notice error" style="margin-top:12px">Email was not sent: ${esc(r.email.error)}</div>` : ''}
     ${failed ? `<div class="notice warn" style="margin-top:12px">${failed} SMS message(s) failed. Check the Twilio error details before sending again.</div>` : ''}
     ${commentFailed ? `<div class="notice warn" style="margin-top:12px">The alert was sent, but the internal Jira audit comment could not be created.</div>` : ''}
     <div class="footer"><div class="left">Reference ${esc(state.data.issueKey)}</div><div class="actions"><button id="close" class="btn primary">Close</button></div></div>
