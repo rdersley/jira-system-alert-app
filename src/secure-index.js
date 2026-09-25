@@ -36,7 +36,15 @@ const LICENSED_DELIVERY_RESOLVERS = new Set([
   'runMonthlyTestNow'
 ]);
 
-const EMAIL_RE = /^[^@\s]{1,64}@[^@\s]{1,190}\.[^@\s]{2,63}$/;
+// Issue-level operations expose client contacts or deliver messages, so they are
+// limited to service desk agents on the issue itself, not everyone who can browse it.
+const AGENT_RESOLVERS = new Set([
+  'getIssueAlertData',
+  'previewEmail',
+  'sendAlert'
+]);
+
+const EMAIL_RE =/^[^@\s]{1,64}@[^@\s]{1,190}\.[^@\s]{2,63}$/;
 const PHONE_RE = /^\+[1-9][0-9]{7,14}$/;
 const ISSUE_KEY_RE = /^[A-Z][A-Z0-9_]{0,29}-[1-9][0-9]*$/i;
 const SAFE_ID_RE = /^[A-Za-z0-9_.:-]{1,160}$/;
@@ -233,6 +241,25 @@ async function requireJiraAdmin() {
   }
 }
 
+async function requireServiceDeskAgent(context = {}, issueKey) {
+  // Forge sets the extension context from the module that rendered the UI, so a
+  // request cannot act on a different issue than the one the agent has open.
+  // A modal opened from the issue panel may not carry the issue, in which case
+  // the agent permission check below is still enforced for the requested issue.
+  const contextIssueKey = text(context?.extension?.issue?.key);
+  if (contextIssueKey && contextIssueKey.toUpperCase() !== text(issueKey).toUpperCase()) {
+    throw new Error('System Alert request does not match the Jira issue that is open.');
+  }
+  const response = await api.asUser().requestJira(route`/rest/api/3/mypermissions?issueKey=${text(issueKey)}&permissions=SERVICEDESK_AGENT`, {
+    headers: { Accept: 'application/json' }
+  });
+  if (!response.ok) throw new Error('Unable to verify service desk agent permission for this issue.');
+  const data = await response.json();
+  if (data?.permissions?.SERVICEDESK_AGENT?.havePermission !== true) {
+    throw new Error('Only service desk agents on this project can use System Alert Manager on this issue.');
+  }
+}
+
 async function sanitizeFreshInstallAdminData(result) {
   if (!result || typeof result !== 'object') return result;
   const storedSettings = await kvs.get(SETTINGS_KEY);
@@ -269,6 +296,7 @@ Resolver.prototype.define = function hardenedDefine(key, fn) {
 
     validateResolverPayload(key, payload);
     if (ADMIN_RESOLVERS.has(key)) await requireJiraAdmin();
+    if (AGENT_RESOLVERS.has(key)) await requireServiceDeskAgent(request?.context || {}, payload.issueKey);
     if (LICENSED_DELIVERY_RESOLVERS.has(key)) requireActiveLicence(request?.context || {});
     let result = await fn(request);
     if (key === 'getAdminData') {
