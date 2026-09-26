@@ -1,4 +1,6 @@
 import { invoke, view } from '@forge/bridge';
+import '@nuvriqo/ui/css';
+import { enableTheme } from '@nuvriqo/ui/theme';
 import './styles.css';
 
 const APP_VERSION = '3.9.5';
@@ -327,7 +329,7 @@ async function send() {
 async function init() {
   renderLoading();
   try {
-    try { await view.theme.enable(); } catch {}
+    await enableTheme(view);
     state.context = await view.getContext();
     const issueKey = issueKeyFromContext(state.context);
     if (!issueKey) throw new Error('Jira did not provide an issue key to the System Alert action.');

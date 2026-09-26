@@ -4,11 +4,13 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "vite build",
-    "dev": "vite"
+    "build": "nuvriqo-ui-check src && vite build",
+    "dev": "vite",
+    "check:ui": "nuvriqo-ui-check src"
   },
   "dependencies": {
-    "@forge/bridge": "6.3.0"
+    "@forge/bridge": "6.3.0",
+    "@nuvriqo/ui": "github:rdersley/nuvriqo-ui#v0.2.0"
   },
   "devDependencies": {
     "vite": "^7.3.6"
