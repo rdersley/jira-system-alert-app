@@ -40,4 +40,20 @@ node -e "process.stdout.write(require('zlib').gzipSync(require('fs').readFileSyn
 rm qa/.auth/storageState.json
 ```
 
+In Windows PowerShell 5.1, which has no `&&`, run the same steps from the repo root:
+
+```powershell
+Set-Location qa; npm install; npx playwright install chromium; Set-Location ..
+```
+
+```powershell
+$env:QA_BASE_URL = 'https://nuvriqo.atlassian.net'; node qa/capture-auth.mjs
+```
+
+```powershell
+node -e "process.stdout.write(require('zlib').gzipSync(require('fs').readFileSync('qa/.auth/storageState.json')).toString('base64'))" | gh secret set JIRA_STORAGE_STATE_GZIP_B64 --repo rdersley/jira-system-alert-app; Remove-Item qa/.auth/storageState.json
+```
+
 The saved file is a live Jira session, so never commit it or share it.
+
+Jira's own analytics calls (`/rest/internal/2/log/...`) often show up as aborted in `failedResources`. They are harmless.
