@@ -13,6 +13,10 @@ on:
         type: choice
         options: [chrome, edge]
         default: chrome
+      expect_text:
+        description: Text that must appear once the app has loaded (VERSION = "v" + VERSION file; blank = page load only)
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -70,6 +74,19 @@ jobs:
               pass
           pathlib.Path('qa/.auth/storageState.json').write_bytes(raw)
           PY
+
+      - name: Resolve expected text
+        env:
+          EXPECT_INPUT: ${{ inputs.expect_text }}
+        shell: bash
+        run: |
+          if [ "$EXPECT_INPUT" = "VERSION" ]; then
+            value="v$(tr -d '[:space:]' < VERSION)"
+          else
+            value="$EXPECT_INPUT"
+          fi
+          echo "QA_EXPECT_TEXT=$value" >> "$GITHUB_ENV"
+          echo "Expected text: ${value:-(none)}"
 
       - name: Run BrowserStack UI smoke
         env:
