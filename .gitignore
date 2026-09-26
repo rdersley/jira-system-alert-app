@@ -146,3 +146,7 @@ node_modules/
 .env
 .env.*
 
+
+# BrowserStack QA: saved Jira sessions are live credentials; evidence is regenerated per run
+qa/.auth/
+qa/artifacts/

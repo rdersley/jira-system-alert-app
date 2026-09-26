@@ -42,6 +42,8 @@ const caps = {
   'browserstack.video': true
 };
 
+const LOGGED_OUT_URL = /id\.atlassian\.com|\/login/i;
+
 // Query strings can carry signed tokens, so evidence keeps only origin and path.
 const safeUrl = value => {
   try { const u = new URL(value); return `${u.origin}${u.pathname}`; } catch { return String(value || '').split('?')[0]; }
@@ -64,6 +66,10 @@ async function waitForExpectedText(page) {
   const deadline = Date.now() + readyTimeoutMs;
   let last = [];
   while (Date.now() < deadline) {
+    // Fail fast when the saved Jira session has expired instead of waiting out the timeout.
+    if (LOGGED_OUT_URL.test(page.url())) {
+      throw new Error(`Authentication state was not accepted; landed on ${safeUrl(page.url())}. Refresh the JIRA_STORAGE_STATE_GZIP_B64 secret.`);
+    }
     last = await frameTexts(page);
     const match = last.find(f => f.text.includes(expectText));
     if (match) return match;
@@ -119,7 +125,7 @@ try {
   const finalUrl = page.url();
   const title = await page.title();
   const bodyText = (await page.locator('body').innerText({ timeout: 15000 })).trim();
-  const looksLoggedOut = /id\.atlassian\.com|\/login/i.test(finalUrl) || /log in to continue|sign in to continue/i.test(bodyText);
+  const looksLoggedOut = LOGGED_OUT_URL.test(finalUrl) || /log in to continue|sign in to continue/i.test(bodyText);
 
   if (looksLoggedOut) throw new Error(`Authentication state was not accepted; landed on ${safeUrl(finalUrl)}`);
   if (!bodyText) throw new Error('Loaded page has an empty body');
