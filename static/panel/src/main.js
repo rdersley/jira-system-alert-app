@@ -1,5 +1,10 @@
 import { invoke, view, Modal } from '@forge/bridge';
+import '@nuvriqo/ui/css';
+import { enableTheme } from '@nuvriqo/ui/theme';
 import './styles.css';
+import './nuvriqo-v1.css';
+
+enableTheme(view);
 
 const APP_VERSION = '3.9.5';
 const app = document.querySelector('#app');
