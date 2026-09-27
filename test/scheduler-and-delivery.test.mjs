@@ -16,8 +16,25 @@ const kvs = {
   delete: async key => { store.delete(key); },
   getSecret: async key => structuredClone(secrets.get(key)),
   setSecret: async (key, value) => { secrets.set(key, structuredClone(value)); },
-  deleteSecret: async key => { secrets.delete(key); }
+  deleteSecret: async key => { secrets.delete(key); },
+  // Minimal key-prefix query with cursor paging, matching @forge/kvs usage.
+  query: () => {
+    const q = { prefix: '', size: 100, start: 0 };
+    const builder = {
+      where: (_field, clause) => { q.prefix = clause.values[0]; return builder; },
+      limit: n => { q.size = n; return builder; },
+      cursor: c => { q.start = Number(c); return builder; },
+      getMany: async () => {
+        const keys = [...store.keys()].filter(k => k.startsWith(q.prefix)).sort();
+        const page = keys.slice(q.start, q.start + q.size);
+        const next = q.start + q.size < keys.length ? String(q.start + q.size) : undefined;
+        return { results: page.map(key => ({ key, value: structuredClone(store.get(key)) })), nextCursor: next };
+      }
+    };
+    return builder;
+  }
 };
+const WhereConditions = { beginsWith: value => ({ condition: 'BEGINS_WITH', values: [value] }) };
 
 const response = (status, body) => ({
   ok: status >= 200 && status < 300,
@@ -62,7 +79,7 @@ class Resolver {
   getDefinitions() { return this.defs; }
 }
 
-mock.module('@forge/kvs', { namedExports: { kvs } });
+mock.module('@forge/kvs', { namedExports: { kvs, WhereConditions } });
 mock.module('@forge/resolver', { defaultExport: Resolver });
 mock.module('@forge/api', {
   defaultExport: { asUser: () => jira('user'), asApp: () => jira('app') },
@@ -263,4 +280,29 @@ test('unknown Twilio regions fall back to global', async () => {
   seed([contact('a')]);
   const saved = await defs.saveProviderSettings({ payload: { twilioRegion: 'au1' } });
   assert.equal(saved.settings.twilioRegion, 'global');
+});
+
+// ---- Personal data ----------------------------------------------------------
+
+test('sendAlert: alert history does not store the sender Atlassian account ID', async () => {
+  seed([contact('a')]);
+  store.set('system-alert:history:SD-1', [{ at: '2026-01-01T00:00:00Z', alertType: 'initial', senderAccountId: 'legacy-agent' }]);
+  await defs.sendAlert({ payload: alertPayload(['a']), context: { accountId: 'agent-1' } });
+  const history = store.get('system-alert:history:SD-1');
+  assert.equal(history.length, 2);
+  assert.equal(JSON.stringify(history).includes('agent-1'), false);
+  assert.equal(JSON.stringify(history).includes('legacy-agent'), false);
+});
+
+test('scheduler: legacy history entries are scrubbed of account IDs once', async () => {
+  seed([contact('a')]);
+  for (let i = 0; i < 150; i++) store.set(`system-alert:history:SD-${i}`, [{ at: 'x', senderAccountId: `agent-${i}` }]);
+  store.set('system-alert:test-history:ACME', [{ at: 'x', senderAccountId: 'agent-t', monthKey: '2026-09' }]);
+  at(SECOND_WED_10AM);
+  await app.monthlyTestScheduler();
+  const leftovers = [...store.entries()].filter(([k, v]) => k.includes('history') && JSON.stringify(v).includes('senderAccountId'));
+  assert.deepEqual(leftovers, []);
+  assert.equal(store.get('system-alert:test-history:ACME')[0].monthKey, '2026-09');
+  assert.equal(store.get('system-alert:history-account-scrub').done, true);
+  assert.equal(store.get('system-alert:history-account-scrub').scrubbed, 151);
 });
