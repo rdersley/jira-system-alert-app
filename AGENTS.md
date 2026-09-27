@@ -12,5 +12,6 @@ This app uses the shared Nuvriqo UI kit (`@nuvriqo/ui`). The style guide is in [
 System Alert Manager specifics:
 
 - Each Custom UI resource (`static/admin`, `static/alert`, `static/panel`) has `@nuvriqo/ui` as its own dependency. Bump the tag in all three together.
+- Legacy `.btn` / `.field` / `.card` classes are mapped to the kit look by `src/nuvriqo-v1.css` in each resource. This file is loaded last, uses kit variables only, and must be kept identical in all three.
 - The admin header is the standard `nq-header`. The setup wizard (`setup-wizard.js`) adds its "Setup guide" button to `.nq-header__meta`.
 - Email HTML (template previews and defaults in `static/admin/src/main.js`, and email rendering in `src/`) keeps real hex colours. Email clients don't run inside Jira, so tokens can't be used there.

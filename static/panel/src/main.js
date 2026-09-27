@@ -2,6 +2,7 @@ import { invoke, view, Modal } from '@forge/bridge';
 import '@nuvriqo/ui/css';
 import { enableTheme } from '@nuvriqo/ui/theme';
 import './styles.css';
+import './nuvriqo-v1.css';
 
 enableTheme(view);
 

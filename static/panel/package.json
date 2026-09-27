@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "@forge/bridge": "6.3.0",
-    "@nuvriqo/ui": "github:rdersley/nuvriqo-ui#v0.2.0"
+    "@nuvriqo/ui": "github:rdersley/nuvriqo-ui#v0.3.0"
   },
   "devDependencies": {
     "vite": "^7.3.6"
