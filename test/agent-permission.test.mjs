@@ -56,7 +56,7 @@ class Resolver {
   getDefinitions() { return request => this.defs[request.key](request); }
 }
 
-mock.module('@forge/kvs', { namedExports: { kvs } });
+mock.module('@forge/kvs', { namedExports: { kvs, WhereConditions: { beginsWith: value => ({ condition: 'BEGINS_WITH', values: [value] }) } } });
 mock.module('@forge/resolver', { defaultExport: Resolver });
 mock.module('@forge/api', {
   defaultExport: { asUser: () => ({ requestJira }), asApp: () => ({ requestJira }) },

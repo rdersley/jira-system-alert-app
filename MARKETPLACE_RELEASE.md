@@ -1,4 +1,4 @@
-# System Alert Manager v3.9.7 — Marketplace Release Candidate
+# System Alert Manager v3.10.3 — Marketplace Release Candidate
 
 ## Release status
 This branch is frozen for Marketplace release validation. Do not add new features before submission unless a release-blocking defect is found.
@@ -7,7 +7,7 @@ This branch is frozen for Marketplace release validation. Do not add new feature
 1. `git pull`
 2. `./test-dev.ps1`
 3. `./deploy-dev.ps1`
-4. Confirm System Alert Manager shows v3.9.7.
+4. Confirm System Alert Manager shows v3.10.3.
 5. Re-open Setup guide and confirm the existing configuration is retained.
 6. Preview and send one test alert by email.
 7. Send one test SMS where Twilio is configured.
@@ -49,11 +49,12 @@ Do not enable `SYSTEM_ALERT_MOCK_PROVIDERS=true` in production.
 
 ## Marketplace configuration
 - App name: System Alert Manager for Jira
-- Version: 3.9.7
+- Version: 3.10.3
 - Licensing: Paid via Atlassian / Forge licensing enabled
+- Personal data: the app stores no Atlassian account IDs (alert history records counts and timestamps only), so no `report:personal-data` scope or personal data reporting job is required.
 - External egress: Microsoft login, Microsoft Graph, SendGrid and Twilio as declared in `manifest.yml`
 - Publish Privacy Policy, EULA/Terms, support policy and documentation before submission.
 - Use screenshots containing fictitious data only.
 
 ## Merge gate
-Merge PR #2 into `master` only after the final local tests and development smoke test pass.
+Merge the release PR into `master` only after the final local tests and development smoke test pass.

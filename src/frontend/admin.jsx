@@ -78,10 +78,10 @@ function ContactEditor({ contact, onSaved, onCancel }) {
   return <Form onSubmit={handleSubmit(submit)}>
     <FormSection>
       <Label labelFor={getFieldId('clientCode')}>Client code</Label>
-      <Textfield {...register('clientCode', { required: true })} placeholder="RYR" />
+      <Textfield {...register('clientCode', { required: true })} placeholder="ACME" />
 
       <Label labelFor={getFieldId('clientName')}>Client name</Label>
-      <Textfield {...register('clientName')} placeholder="Ryanair" />
+      <Textfield {...register('clientName')} placeholder="Acme Ltd" />
 
       <Label labelFor={getFieldId('name')}>Contact / distribution list name</Label>
       <Textfield {...register('name', { required: true })} />

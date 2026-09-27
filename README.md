@@ -1,6 +1,16 @@
-# System Alert Manager v3.9.2
+# System Alert Manager v3.10.3
 
 System Alert Manager for Jira Service Management provides controlled client-isolated incident communications by email and SMS.
+
+## v3.10.3 highlights
+
+- Email and SMS are delivered independently: an outage on one channel no longer blocks the other, and failures are recorded on the Jira comment.
+- Twilio Ireland (IE1) region support.
+- Issue alert actions are restricted to service desk agents.
+- Admin UI rebuilt on the shared Nuvriqo app shell.
+- Alert history no longer stores the sender's Atlassian account ID; entries from earlier versions are scrubbed automatically.
+
+Sections below describe earlier releases.
 
 ## v3.9.2 highlights
 

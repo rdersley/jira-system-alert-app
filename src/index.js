@@ -1,6 +1,6 @@
 import Resolver from '@forge/resolver';
 import api, { route, fetch } from '@forge/api';
-import { kvs } from '@forge/kvs';
+import { kvs, WhereConditions } from '@forge/kvs';
 import { scheduleState } from './monthly-schedule.mjs';
 
 const resolver = new Resolver();
@@ -14,6 +14,9 @@ const TEMPLATE_SETTINGS_KEY = 'system-alert:templates';
 const BRANDING_SETTINGS_KEY = 'system-alert:branding';
 const MICROSOFT_CONNECTION_KEY = 'system-alert:microsoft:connection';
 const MAX_LOGO_DATA_LENGTH = 200000;
+const HISTORY_SCRUB_KEY = 'system-alert:history-account-scrub';
+const HISTORY_PREFIXES = ['system-alert:history:', 'system-alert:test-history:'];
+const CONTACT_READ_CONCURRENCY = 10;
 const PROVIDER_SECRET_KEYS = {
   sendgridApiKey: 'system-alert:provider:sendgrid-api-key',
   twilioAccountSid: 'system-alert:provider:twilio-account-sid',
@@ -282,8 +285,55 @@ function renderTemplate(value, a = {}) {
 async function getContact(id) { return await kvs.getSecret(`system-alert:contact:${id}`); }
 async function getAllContacts() {
   const ids = (await kvs.get(CONTACT_INDEX)) || [];
-  const rows = await Promise.all(ids.map(getContact));
+  // Read secrets in small batches so large contact lists do not fire hundreds
+  // of concurrent storage calls and trip Forge rate limits.
+  const rows = [];
+  for (let i = 0; i < ids.length; i += CONTACT_READ_CONCURRENCY) {
+    rows.push(...await Promise.all(ids.slice(i, i + CONTACT_READ_CONCURRENCY).map(getContact)));
+  }
   return rows.filter(Boolean);
+}
+
+// Alert history no longer records the Atlassian account ID of the sender, so
+// the app stores no personal data about Atlassian users. Entries written by
+// earlier versions are stripped when read, rewritten, or by the one-time scrub.
+function withoutAccountIds(entries) {
+  if (!Array.isArray(entries)) return [];
+  return entries.map(entry => {
+    if (!entry || typeof entry !== 'object' || !('senderAccountId' in entry)) return entry;
+    const { senderAccountId, ...rest } = entry;
+    return rest;
+  });
+}
+
+async function readHistory(key) {
+  return withoutAccountIds(await kvs.get(key));
+}
+
+async function scrubLegacyHistoryAccountIds({ maxPages = 10 } = {}) {
+  const state = (await kvs.get(HISTORY_SCRUB_KEY)) || {};
+  if (state.done) return state;
+  let prefixIndex = Number(state.prefixIndex || 0);
+  let cursor = state.cursor || undefined;
+  let scrubbed = Number(state.scrubbed || 0);
+  for (let page = 0; page < maxPages && prefixIndex < HISTORY_PREFIXES.length; page++) {
+    let query = kvs.query().where('key', WhereConditions.beginsWith(HISTORY_PREFIXES[prefixIndex])).limit(100);
+    if (cursor) query = query.cursor(cursor);
+    const { results = [], nextCursor } = await query.getMany();
+    for (const { key, value } of results) {
+      if (Array.isArray(value) && value.some(e => e && typeof e === 'object' && 'senderAccountId' in e)) {
+        await kvs.set(key, withoutAccountIds(value));
+        scrubbed++;
+      }
+    }
+    if (nextCursor) cursor = nextCursor;
+    else { prefixIndex++; cursor = undefined; }
+  }
+  const next = prefixIndex >= HISTORY_PREFIXES.length
+    ? { done: true, scrubbed, at: new Date().toISOString() }
+    : { done: false, prefixIndex, cursor: cursor || null, scrubbed };
+  await kvs.set(HISTORY_SCRUB_KEY, next);
+  return next;
 }
 
 const normalizeTextValue = (v) => {
@@ -504,7 +554,7 @@ resolver.define('getAdminData', async () => {
   const monthlyClients = [...new Set(contactsRaw.filter(c => c.active !== false && c.monthlyTestAlerts && c.clientCode).map(c => c.clientCode))].sort();
   const autoTestClients = [];
   for (const clientCode of monthlyClients) {
-    const history = (await kvs.get(`system-alert:test-history:${clientCode}`)) || [];
+    const history = await readHistory(`system-alert:test-history:${clientCode}`);
     const eligible = contactsRaw.filter(c => c.active !== false && c.monthlyTestAlerts && normalizeTextValue(c.clientCode).toUpperCase() === clientCode);
     const emailCount = new Set(eligible.filter(c => c.emailAlerts === true && normalizeTextValue(c.email)).map(c => normalizeTextValue(c.email).toLowerCase())).size;
     const smsCount = new Set(eligible.filter(c => c.smsAlerts === true && normalizeTextValue(c.mobile)).map(c => normalizeTextValue(c.mobile))).size;
@@ -858,8 +908,8 @@ resolver.define('getIssueAlertData', async ({ payload }) => {
     priorities: c.priorities
   }));
 
-  const history = (await kvs.get(`system-alert:history:${payload.issueKey}`)) || [];
-  const monthlyHistory = (await kvs.get(`system-alert:test-history:${clientCode}`)) || [];
+  const history = await readHistory(`system-alert:history:${payload.issueKey}`);
+  const monthlyHistory = await readHistory(`system-alert:test-history:${clientCode}`);
   const thisMonth = monthKey();
   const monthlyTestCompleted = monthlyHistory.some(h => h.monthKey === thisMonth);
 
@@ -1307,18 +1357,17 @@ resolver.define('sendAlert', async ({ payload, context }) => {
     emailFailed: Boolean(results.email.error),
     smsCount: results.sms.sent,
     smsFailedCount: results.sms.failed.length,
-    senderAccountId: context.accountId || '',
     monthKey: isTest ? monthKey() : undefined,
     monthLabel: isTest ? a.testMonth : undefined
   };
 
   const issueHistoryKey = `system-alert:history:${a.issueKey}`;
-  const history = (await kvs.get(issueHistoryKey)) || [];
+  const history = await readHistory(issueHistoryKey);
   await kvs.set(issueHistoryKey, [entry, ...history].slice(0, 50));
 
   if (isTest) {
     const testHistoryKey = `system-alert:test-history:${a.clientCode}`;
-    const testHistory = (await kvs.get(testHistoryKey)) || [];
+    const testHistory = await readHistory(testHistoryKey);
     await kvs.set(testHistoryKey, [entry, ...testHistory].slice(0, 36));
   }
 
@@ -1402,7 +1451,7 @@ async function deliverMonthlyTest(clientCode, { automatic = false, now = new Dat
     monthKey: monthKey(now), monthLabel: label
   };
   const historyKey = `system-alert:test-history:${code}`;
-  const history = (await kvs.get(historyKey)) || [];
+  const history = await readHistory(historyKey);
   await kvs.set(historyKey, [entry, ...history].slice(0, 36));
   return { clientCode: code, sent: true, automatic, emailCount, emailFailed: entry.emailFailed, emailError: delivery.email.error || '', smsCount: smsSent, smsFailedCount, at: entry.at, monthKey: entry.monthKey, monthLabel: label };
 }
@@ -1412,6 +1461,11 @@ resolver.define('runMonthlyTestNow', async ({ payload }) => {
 });
 
 export async function monthlyTestScheduler() {
+  try {
+    await scrubLegacyHistoryAccountIds();
+  } catch (e) {
+    console.warn(`Legacy history scrub skipped: ${e.message}`);
+  }
   const settings = await getSettings();
   const now = new Date();
   const targetHour = Number(settings.monthlyTestHour ?? 10);

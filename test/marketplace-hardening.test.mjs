@@ -30,6 +30,16 @@ test('Forge runtime uses the tested hardened entry point without a second Resolv
   assert.equal(manifest.includes('final-index.monthlyTestScheduler'), false);
 });
 
+test('release docs reference the current version', () => {
+  const heading = new RegExp(`^# System Alert Manager v${version.replaceAll('.', '\\.')}\\b`);
+  assert.match(text('README.md'), heading);
+  assert.match(text('MARKETPLACE_RELEASE.md'), heading);
+});
+
+test('alert history does not store Atlassian account IDs', () => {
+  assert.equal(/senderAccountId:s*context/.test(text('src/index.js')), false);
+});
+
 test('release version markers stay aligned', () => {
   const rootPackage = JSON.parse(text('package.json'));
   const adminPackage = JSON.parse(text('static/admin/package.json'));
