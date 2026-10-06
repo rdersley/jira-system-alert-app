@@ -2,6 +2,7 @@ import Resolver from '@forge/resolver';
 import api, { route, fetch } from '@forge/api';
 import { kvs, WhereConditions } from '@forge/kvs';
 import { scheduleState } from './monthly-schedule.mjs';
+import { exportBackupPage, importBackupBatch } from './backup.js';
 
 const resolver = new Resolver();
 const CONTACT_INDEX = 'system-alert:contacts:index';
@@ -1533,5 +1534,12 @@ export async function monthlyTestScheduler() {
   await kvs.set(SCHEDULER_STATUS_KEY, { ...statusBase, outcome, reason, results: results.slice(0, 50) });
   return { monthKey: month, monthLabel: label, results };
 }
+
+// Backup & restore (admin page; Jira admins only, see secure-index.js). Contacts are kept as
+// secrets, so they are named for the backup explicitly; provider keys are never backed up.
+const CONTACT_SECRET_KEY = /^system-alert:contact:[A-Za-z0-9_.:-]{1,160}$/;
+const contactSecretKeys = async () => ((await kvs.get(CONTACT_INDEX)) || []).map(id => `system-alert:contact:${id}`);
+resolver.define('exportBackupPage', async ({ payload }) => exportBackupPage(payload?.cursor || null, { secretKeys: contactSecretKeys }));
+resolver.define('importBackupBatch', async ({ payload }) => importBackupBatch(payload?.items, { allowSecretKey: key => CONTACT_SECRET_KEY.test(key) }));
 
 export const handler = resolver.getDefinitions();
