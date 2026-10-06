@@ -12,5 +12,8 @@
   },
   "devDependencies": {
     "vite": "^7.3.6"
+  },
+  "overrides": {
+    "prosemirror-view": "^1.42.3"
   }
 }
