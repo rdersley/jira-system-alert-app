@@ -23,7 +23,9 @@ const ADMIN_RESOLVERS = new Set([
   'saveContact',
   'testContact',
   'runMonthlyTestNow',
-  'deleteContact'
+  'deleteContact',
+  'exportBackupPage',
+  'importBackupBatch'
 ]);
 
 // Operations that actually deliver a message must not run on an inactive
