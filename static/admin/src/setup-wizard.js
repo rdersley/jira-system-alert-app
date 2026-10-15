@@ -22,15 +22,9 @@ async function loadData(){
 }
 
 function attachHeaderButton(){
-  const hero = document.querySelector('.hero');
-  const version = hero?.querySelector('.version');
-  if (!hero || !version || byId('samSetupHeaderButton')) return false;
-
-  const actions = document.createElement('div');
-  actions.id = 'samSetupHeaderActions';
-  actions.style.display = 'flex';
-  actions.style.alignItems = 'center';
-  actions.style.gap = '10px';
+  const meta = document.querySelector('.nq-header__meta');
+  const version = meta?.querySelector('.nq-pill');
+  if (!meta || !version || byId('samSetupHeaderButton')) return false;
 
   const btn = document.createElement('button');
   btn.id = 'samSetupHeaderButton';
@@ -40,9 +34,7 @@ function attachHeaderButton(){
   btn.onclick = openWizard;
 
   version.textContent = 'v3.10.3';
-  hero.replaceChild(actions, version);
-  actions.appendChild(btn);
-  actions.appendChild(version);
+  meta.insertBefore(btn, version);
   return true;
 }
 

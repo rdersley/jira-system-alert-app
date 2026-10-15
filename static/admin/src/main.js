@@ -1,5 +1,9 @@
-import { invoke } from '@forge/bridge';
+import { invoke, view } from '@forge/bridge';
+import '@nuvriqo/ui/css';
+import { enableTheme } from '@nuvriqo/ui/theme';
 import './styles.css';
+
+enableTheme(view);
 
 const APP_VERSION = '3.10.3';
 const app = document.querySelector('#app');
@@ -46,15 +50,19 @@ function render() {
   const active = state.activeSection || 'general';
 
   app.innerHTML = `<div class="page">
-    <header class="hero">
-      <div>
-        <h1>System Alert Manager</h1>
-        <p>Configure incident communications, delivery providers, templates and client contacts.</p>
+    <header class="nq-header">
+      <div class="nq-header__brand">
+        <span class="nq-mark" aria-hidden="true">N</span>
+        <div class="nq-header__text">
+          <span class="nq-eyebrow">Nuvriqo</span>
+          <h1 class="nq-header__title">System Alert Manager</h1>
+          <p class="nq-header__subtitle">Configure incident communications, delivery providers, templates and client contacts.</p>
+        </div>
       </div>
-      <span class="version">v${esc(state.data.appVersion || APP_VERSION)}</span>
+      <div class="nq-header__meta"><span class="nq-pill">v${esc(state.data.appVersion || APP_VERSION)}</span></div>
     </header>
 
-    <nav class="admin-nav" aria-label="System Alert settings">
+    <nav class="nq-tabs" role="tablist" aria-label="System Alert settings">
       ${navButton('general','General',active)}
       ${navButton('contacts','Clients & Contacts',active)}
       ${navButton('providers','Communication Providers',active)}
@@ -221,7 +229,7 @@ Please create an Entra application registration for System Alert Manager and gra
 }
 
 function navButton(key, label, active) {
-  return `<button type="button" class="admin-nav-item ${active===key?'active':''}" data-section="${key}">${esc(label)}</button>`;
+  return `<button type="button" class="nq-tab" role="tab" aria-selected="${active===key}" data-section="${key}">${esc(label)}</button>`;
 }
 
 function templateNavButton(key, label) {

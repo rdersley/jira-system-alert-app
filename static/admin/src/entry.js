@@ -6,3 +6,4 @@ import './backup-tools.js';
 import './setup-wizard.js';
 import './setup-wizard-overrides.css';
 import './release-polish.css';
+import './nuvriqo-v1.css';

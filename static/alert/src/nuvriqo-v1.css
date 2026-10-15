@@ -1,0 +1,16 @@
+/*
+ * System Alert Manager legacy classes -> Nuvriqo UI System v1 (via @nuvriqo/ui variables).
+ * Loaded after the app's own styles. New markup should use nq-* classes directly.
+ */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:var(--nq-control-height);padding:var(--nq-btn-padding);border:1px solid var(--nq-border-strong);border-radius:var(--nq-btn-radius);font-weight:var(--nq-btn-weight);line-height:1.2;filter:none;box-shadow:none;transition:background .16s ease,border-color .16s ease}
+.btn.secondary{background:var(--nq-surface-raised);color:var(--nq-text)}
+.btn.secondary:hover{background:var(--nq-surface-hovered);border-color:var(--nq-border-input);filter:none}
+.btn.primary{background:var(--nq-bg-brand);border-color:var(--nq-bg-brand);color:var(--nq-text-inverse)}
+.btn.primary:hover{background:var(--nq-bg-brand-hovered);border-color:var(--nq-bg-brand-hovered);filter:none}
+.btn.danger{background:var(--nq-bg-danger-bold);border-color:var(--nq-bg-danger-bold);color:var(--nq-text-inverse)}
+.btn.danger:hover{background:var(--nq-bg-danger-bold-hovered);border-color:var(--nq-bg-danger-bold-hovered);filter:none}
+.btn.small{min-height:var(--nq-control-height-sm);padding:0 10px;border-radius:var(--nq-radius-sm);font-size:12px}
+.btn:disabled{opacity:.48;cursor:not-allowed}
+.field input:not([type=checkbox]):not([type=radio]):not([type=color]),.field select,.field textarea,.contact-filter{min-height:var(--nq-control-height);border:1px solid var(--nq-border-strong);border-radius:var(--nq-radius);padding:9px 11px;background:var(--nq-bg-input);color:var(--nq-text)}
+.field input:not([type=checkbox]):not([type=radio]):focus,.field select:focus,.field textarea:focus,.contact-filter:focus{outline:none;border-color:var(--nq-border-focused);box-shadow:0 0 0 2px var(--nq-focus-ring)}
+.card{border-radius:var(--nq-radius-lg);box-shadow:var(--nq-shadow-card)}
