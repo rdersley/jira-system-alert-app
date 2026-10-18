@@ -2,6 +2,8 @@
 
 System Alert Manager for Jira Service Management provides controlled client-isolated incident communications by email and SMS.
 
+**Live on the Atlassian Marketplace for Jira Cloud:** [install or start a free trial](https://marketplace.atlassian.com/apps/2245091284/system-alert-manager-for-jira-service-management?utm_source=github&utm_medium=readme&utm_campaign=system_alert_manager) · [product page and demo video](https://nuvriqo.com/apps/system-alert-manager.html) · [support](https://nuvriqo.com/support.html)
+
 ## v3.10.3 highlights
 
 - Email and SMS are delivered independently: an outage on one channel no longer blocks the other, and failures are recorded on the Jira comment.
